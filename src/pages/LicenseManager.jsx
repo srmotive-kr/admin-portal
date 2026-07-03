@@ -202,7 +202,7 @@ function DetailPanel({ row, onClose, onRefresh }) {
       max_emps: form.max_emps !== '' ? Number(form.max_emps) : null,
       max_users: form.max_users !== '' ? Number(form.max_users) : null,
       updated_at: new Date().toISOString(),
-    }).eq('id', row.id)
+    }).eq('license_key', row.license_key)
     setSaving(false)
     if (error) setSaveErr(`저장 실패: ${error.message}`)
     else { setSaveMsg('저장됨'); onRefresh() }
@@ -213,7 +213,7 @@ function DetailPanel({ row, onClose, onRefresh }) {
     const { error } = await supabase.from('licenses').update({
       email: form.email || null,
       updated_at: new Date().toISOString(),
-    }).eq('id', row.id)
+    }).eq('license_key', row.license_key)
     if (error) setEmailErr(`저장 실패: ${error.message}`)
     else { setEmailMsg('이메일 저장됨'); onRefresh() }
   }
@@ -233,7 +233,7 @@ function DetailPanel({ row, onClose, onRefresh }) {
     const { error } = await supabase.from('licenses').update({
       hw_ids: next,
       updated_at: new Date().toISOString(),
-    }).eq('id', row.id)
+    }).eq('license_key', row.license_key)
     if (!error) { setHwIds(next); onRefresh() }
   }
 
@@ -241,12 +241,12 @@ function DetailPanel({ row, onClose, onRefresh }) {
     const { error } = await supabase.from('licenses').update({
       hw_ids: [],
       updated_at: new Date().toISOString(),
-    }).eq('id', row.id)
+    }).eq('license_key', row.license_key)
     if (!error) { setHwIds([]); onRefresh() }
   }
 
   async function deleteLicense() {
-    const { error } = await supabase.from('licenses').delete().eq('id', row.id)
+    const { error } = await supabase.from('licenses').delete().eq('license_key', row.license_key)
     if (!error) { onRefresh(); onClose() }
   }
 
