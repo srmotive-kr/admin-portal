@@ -252,11 +252,18 @@ function DetailPanel({ row, onClose, onRefresh }) {
 
   async function generateUnlockCode() {
     setUnlockLoading(true); setUnlockCode(''); setUnlockErr('')
+    const { data: { session } } = await supabase.auth.getSession()
     const { error, data } = await supabase.functions.invoke('generate-unlock-code', {
       body: { license_key: row.license_key },
+      headers: session ? { Authorization: `Bearer ${session.access_token}` } : {},
     })
     setUnlockLoading(false)
-    if (error) { setUnlockErr(`발급 실패: ${error.message}`); return }
+    if (error) {
+      let detail = error.message
+      try { const b = await error.context?.json(); if (b?.error) detail = b.error } catch {}
+      setUnlockErr(`발급 실패: ${detail}`)
+      return
+    }
     setUnlockCode(data.token)
   }
 
