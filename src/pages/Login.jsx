@@ -2,9 +2,11 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
 
+const LAST_EMAIL_KEY = 'sr_admin_last_email'
+
 export default function Login() {
   const navigate = useNavigate()
-  const [email, setEmail] = useState('')
+  const [email, setEmail] = useState(() => localStorage.getItem(LAST_EMAIL_KEY) || '')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -18,6 +20,7 @@ export default function Login() {
       setError(error.message)
       setLoading(false)
     } else {
+      localStorage.setItem(LAST_EMAIL_KEY, email)
       navigate('/')
     }
   }
@@ -25,15 +28,16 @@ export default function Login() {
   return (
     <div style={styles.wrap}>
       <div style={styles.card}>
-        <div style={styles.logo}>
-          <div style={styles.logoIcon}>
-            <span style={styles.logoSR}>SR</span>
-            <div style={styles.logoDot} />
-          </div>
-          <div>
-            <div style={styles.logoName}>SR<span style={{ color: 'var(--orange-500)' }}>MOTIVE</span></div>
-            <div style={styles.logoSub}>Admin Portal</div>
-          </div>
+        <div style={styles.logo} translate="no">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="515 663 2950 775" style={{ height: 36, width: 'auto', display: 'block' }} aria-label="SRMOTIVE">
+            <path fill="#2B5EA7" fillRule="evenodd" transform="matrix(1.83697e-16 1 1 -1.83697e-16 542 810)" d="M0 519 0 178.936C-3.30379e-14 80.1125 80.1126 0 178.937 0L184.497 0C283.321-3.30378e-14 363.433 80.1125 363.433 178.936L363.433 281.324 406 281.324 304.5 281.324 203 281.324 245.567 281.324 245.567 178.936C245.567 145.208 218.225 117.866 184.497 117.866L178.937 117.866C145.208 117.866 117.866 145.208 117.866 178.936L117.866 519Z"/>
+            <path fill="#2B5EA7" fillRule="evenodd" d="M1084 810 1421.86 810C1521.9 810 1603 891.099 1603 991.139L1603 991.139C1603 1091.18 1521.9 1172.28 1421.86 1172.28L1114.09 1172.28 1114.09 1215 1114.09 1113.75 1114.09 1012.5 1114.09 1055.22 1421.86 1055.22C1457.25 1055.22 1485.94 1026.53 1485.94 991.139L1485.94 991.139C1485.94 955.748 1457.25 927.057 1421.86 927.057L1084 927.057Z"/>
+            <path fill="#2B5EA7" fillRule="evenodd" transform="matrix(1 -1.22465e-16 -1.22465e-16 -1 1114 1418)" d="M0 144.5 234 0 468 0 0 289Z"/>
+            <path fill="#2B5EA7" fillRule="evenodd" transform="matrix(-6.12323e-17 -1 -1 6.12323e-17 1055 1418)" d="M0 520 0 179.707C-3.31015e-14 80.4574 80.4574 0 179.707 0L183.09 0C282.34-3.31015e-14 362.797 80.4574 362.797 179.707L362.797 232.981 405 232.981 303.75 232.981 202.5 232.981 244.703 232.981 244.703 179.707C244.703 145.679 217.118 118.094 183.09 118.094L179.707 118.094C145.679 118.094 118.094 145.678 118.094 179.706L118.094 520Z"/>
+            <polyline fill="none" stroke="#E53E3E" strokeWidth="38" strokeLinecap="round" strokeLinejoin="round" points="998,748 1042,806 1132,683"/>
+            <text fill="#EF8B47" fontFamily="'Sora','Century Gothic',sans-serif" fontWeight="700" fontSize="454" x="1591" y="1413">MOTIVE</text>
+          </svg>
+          <div style={styles.logoSub}>Admin Portal</div>
         </div>
 
         <h2 style={styles.title}>관리자 로그인</h2>
@@ -45,7 +49,6 @@ export default function Login() {
               type="email"
               value={email}
               onChange={e => setEmail(e.target.value)}
-              placeholder="admin@srmotive.co.kr"
               required
               style={styles.input}
             />
@@ -56,7 +59,6 @@ export default function Login() {
               type="password"
               value={password}
               onChange={e => setPassword(e.target.value)}
-              placeholder="••••••••"
               required
               style={styles.input}
             />
@@ -88,52 +90,16 @@ const styles = {
   },
   logo: {
     display: 'flex',
+    flexDirection: 'column',
     alignItems: 'center',
-    gap: 12,
+    gap: 6,
     marginBottom: 32,
-    justifyContent: 'center',
-  },
-  logoIcon: {
-    width: 44,
-    height: 44,
-    background: 'linear-gradient(135deg, var(--blue-600), var(--blue-900))',
-    borderRadius: 12,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative',
-    boxShadow: '0 2px 8px rgba(29,78,216,0.35)',
-  },
-  logoSR: {
-    fontFamily: 'system-ui, sans-serif',
-    fontWeight: 900,
-    fontSize: 15,
-    color: 'white',
-    letterSpacing: '-0.5px',
-  },
-  logoDot: {
-    position: 'absolute',
-    top: -3,
-    right: -3,
-    width: 11,
-    height: 11,
-    background: 'var(--orange-500)',
-    borderRadius: '50%',
-    border: '2px solid white',
-  },
-  logoName: {
-    fontFamily: 'system-ui, sans-serif',
-    fontWeight: 900,
-    fontSize: 20,
-    color: 'var(--blue-900)',
-    lineHeight: 1,
   },
   logoSub: {
     fontSize: 10,
     color: 'var(--gray-400)',
     letterSpacing: '2px',
     textTransform: 'uppercase',
-    marginTop: 2,
   },
   title: {
     fontSize: 18,
