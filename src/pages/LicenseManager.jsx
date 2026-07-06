@@ -318,8 +318,8 @@ function DetailPanel({ row, onClose, onRefresh }) {
               <input type="date" value={form.expires_at} onChange={e => setForm(f => ({ ...f, expires_at: e.target.value }))} style={styles.input} />
             </div>
             <div style={styles.field}>
-              <label style={styles.label}>최대 직원수</label>
-              <input type="number" value={form.max_emps} onChange={e => setForm(f => ({ ...f, max_emps: e.target.value }))} style={styles.input} min={0} />
+              <label style={styles.label}>최대 직원수 <span style={{ color: '#9CA3AF', fontWeight: 400 }}>(비워두면 무제한)</span></label>
+              <input type="number" value={form.max_emps} onChange={e => setForm(f => ({ ...f, max_emps: e.target.value }))} style={styles.input} min={1} placeholder="무제한" />
             </div>
             <div style={{ ...styles.field, gridColumn: '1 / -1' }}>
               <label style={styles.label}>최대 PC수 (max_users)</label>
@@ -475,7 +475,7 @@ function IssueModal({ onClose, onRefresh }) {
       channel: form.channel,
       status: 'ACTIVE',
       product_code: 'smart-hr-plus',
-      max_emps: { FREE: 4, STARTER: 9, PRO: 29, ENTERPRISE: 0 }[form.grade] ?? 4,
+      max_emps: { FREE: 4, STARTER: 9, PRO: 29, ENTERPRISE: null }[form.grade] ?? 4,
     }).select().single()
 
     if (error) {
