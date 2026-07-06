@@ -182,6 +182,8 @@ function DetailPanel({ row, onClose, onRefresh }) {
   const [unlockCode, setUnlockCode] = useState('')
   const [unlockLoading, setUnlockLoading] = useState(false)
   const [unlockErr, setUnlockErr] = useState('')
+  const [unlockEmailSent, setUnlockEmailSent] = useState(false)
+  const [unlockMaskedEmail, setUnlockMaskedEmail] = useState('')
 
   useEffect(() => {
     supabase.from('download_logs')
@@ -251,7 +253,7 @@ function DetailPanel({ row, onClose, onRefresh }) {
   }
 
   async function generateUnlockCode() {
-    setUnlockLoading(true); setUnlockCode(''); setUnlockErr('')
+    setUnlockLoading(true); setUnlockCode(''); setUnlockErr(''); setUnlockEmailSent(false); setUnlockMaskedEmail('')
     const { data: { session } } = await supabase.auth.getSession()
     const { error, data } = await supabase.functions.invoke('generate-unlock-code', {
       body: { license_key: row.license_key },
@@ -265,6 +267,10 @@ function DetailPanel({ row, onClose, onRefresh }) {
       return
     }
     setUnlockCode(data.token)
+    if (data.emailSent) {
+      setUnlockEmailSent(true)
+      setUnlockMaskedEmail(data.maskedEmail)
+    }
   }
 
   return (
@@ -405,13 +411,17 @@ function DetailPanel({ row, onClose, onRefresh }) {
           <div style={styles.sectionTitle}>ADMIN 잠금 해제</div>
           <div style={{ fontSize: 12, color: 'var(--gray-500)', lineHeight: 1.6, marginBottom: 8 }}>
             고객 ADMIN 계정이 비밀번호 오류로 잠긴 경우,<br />
-            아래 코드를 고객에게 전달하세요. (30분 유효)
+            코드를 발급하면 등록 이메일로 자동 발송됩니다. (30분 유효)
           </div>
           {unlockCode ? (
             <div style={{ background: '#F5F3FF', border: '1px solid #DDD6FE', borderRadius: 10, padding: '14px', textAlign: 'center' }}>
               <div style={{ fontSize: 11, color: '#7C3AED', fontWeight: 600, marginBottom: 6 }}>언락 코드 (30분 유효)</div>
               <div style={{ fontSize: 32, fontWeight: 900, letterSpacing: 10, color: '#7C3AED', fontFamily: 'monospace' }}>{unlockCode}</div>
               <div style={{ fontSize: 11, color: 'var(--gray-400)', marginTop: 6 }}>고객이 앱 복구 화면에 입력</div>
+              {unlockEmailSent
+                ? <div style={{ marginTop: 8, fontSize: 11, color: '#15803D', fontWeight: 600 }}>📧 {unlockMaskedEmail} 으로 자동 발송됨</div>
+                : <div style={{ marginTop: 8, fontSize: 11, color: '#B45309' }}>⚠ 등록 이메일 없음 — 코드를 직접 전달하세요</div>
+              }
             </div>
           ) : (
             <>
