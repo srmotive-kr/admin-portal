@@ -485,7 +485,8 @@ function IssueModal({ onClose, onRefresh }) {
       channel: form.channel,
       status: 'ACTIVE',
       product_code: 'smart-hr-plus',
-      max_emps: { FREE: 4, STARTER: 9, PRO: 29, ENTERPRISE: null }[form.grade] ?? 4,
+      max_emps:  { FREE: 4, STARTER: 9, PRO: 29, ENTERPRISE: null }[form.grade] ?? 4,
+      max_users: { FREE: 1, STARTER: 1, PRO: 2,  ENTERPRISE: 0    }[form.grade] ?? 1,
     }).select().single()
 
     if (error) {
