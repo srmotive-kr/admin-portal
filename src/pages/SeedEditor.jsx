@@ -18,7 +18,7 @@ const CODE_GROUPS = [
   { code: 'SEVERANCE_TYPE',label: '퇴직금구분',     hasTaxable: false, hasOrdinary: false },
 ]
 
-const MAIN_TABS = ['코드', '보험요율', '세액표', '공휴일']
+const MAIN_TABS = ['코드', '보험요율', '세액표', '공휴일', '출산육아급여']
 
 // ─── 보험요율 컬럼 정의 ─────────────────────────────────────────────────────
 const INS_COLS = [
@@ -59,9 +59,10 @@ export default function SeedEditor() {
       {mainTab === '코드' && (
         <CodeTab groupCode={groupCode} onGroupChange={setGroupCode} />
       )}
-      {mainTab === '보험요율' && <InsuranceTab />}
-      {mainTab === '세액표'   && <TaxTab />}
-      {mainTab === '공휴일'   && <HolidayTab />}
+      {mainTab === '보험요율'   && <InsuranceTab />}
+      {mainTab === '세액표'     && <TaxTab />}
+      {mainTab === '공휴일'     && <HolidayTab />}
+      {mainTab === '출산육아급여' && <LeaveRateTab />}
     </div>
   )
 }
@@ -1102,6 +1103,173 @@ function BulkUploadModal({ onClose }) {
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+// ─── 출산육아급여기준 탭 ─────────────────────────────────────────────────────
+function LeaveRateTab() {
+  const [items,   setItems]   = useState([])
+  const [loading, setLoading] = useState(true)
+  const [saving,  setSaving]  = useState(false)
+  const [dirty,   setDirty]   = useState(false)
+  const [msg,     setMsg]     = useState(null)
+
+  const load = async () => {
+    setLoading(true); setMsg(null)
+    const { data, error } = await supabase
+      .from('gov_leave_benefit_rates').select('*').order('year', { ascending: false })
+    if (error) { setMsg({ type: 'error', text: error.message }); setLoading(false); return }
+    setItems(data || []); setDirty(false); setLoading(false)
+  }
+  useEffect(() => { load() }, [])
+
+  const change = (idx, key, val) => {
+    setItems(prev => prev.map((it, i) => i === idx ? { ...it, [key]: val, _dirty: true } : it))
+    setDirty(true)
+  }
+
+  const handleAdd = () => {
+    setItems(prev => [...prev, {
+      id: null, year: new Date().getFullYear(),
+      maternity_ei_cap: 0, paternity_days: 0, paternity_ei_cap: null,
+      parental_cap_1_3: 0, parental_cap_4_6: 0, parental_cap_7p: 0,
+      parental_rate_1_6: 1.0, parental_rate_7p: 0.8, parental_floor: 0,
+      memo: '', _dirty: true,
+    }])
+    setDirty(true)
+  }
+
+  const handleDelete = async (idx) => {
+    const it = items[idx]
+    if (it.id !== null) {
+      if (!window.confirm(`${it.year}년 출산육아급여기준을 삭제하시겠습니까?`)) return
+      const { error } = await supabase.from('gov_leave_benefit_rates').delete().eq('id', it.id)
+      if (error) { setMsg({ type: 'error', text: error.message }); return }
+    }
+    setItems(prev => prev.filter((_, i) => i !== idx))
+    setDirty(true)
+  }
+
+  const handleSave = async () => {
+    const toSave = items.filter(it => it._dirty)
+    if (!toSave.length) return
+    setSaving(true); setMsg(null)
+    for (const it of toSave) {
+      const { _dirty, id, ...payload } = it
+      if (id === null) {
+        const { error } = await supabase.from('gov_leave_benefit_rates').insert(payload)
+        if (error) { setMsg({ type: 'error', text: error.message }); setSaving(false); return }
+      } else {
+        const { error } = await supabase.from('gov_leave_benefit_rates').update(payload).eq('id', id)
+        if (error) { setMsg({ type: 'error', text: error.message }); setSaving(false); return }
+      }
+    }
+    setMsg({ type: 'success', text: '저장 완료' })
+    setSaving(false); load()
+  }
+
+  const fmtW = v => v != null ? Number(v).toLocaleString() : ''
+
+  return (
+    <div style={s.card}>
+      <div style={s.toolbar}>
+        <span style={s.cnt}>
+          총 <strong style={{ color: '#2563EB' }}>{items.length}</strong>건
+          {dirty && <span style={{ color: '#DC2626', marginLeft: 8 }}>● 미저장</span>}
+        </span>
+        <button style={s.btn('ghost')} onClick={load} disabled={saving}>↺ 새로고침</button>
+        <button style={s.btn('success')} onClick={handleAdd} disabled={saving}>+ 연도 추가</button>
+        <button style={s.btn('primary')} onClick={handleSave} disabled={saving || !dirty}>
+          {saving ? '저장 중…' : '💾 저장'}
+        </button>
+      </div>
+      {msg && <div style={{ ...s.alert, ...(msg.type === 'error' ? s.alertError : s.alertOk), display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}><span>{msg.text}</span><button onClick={() => setMsg(null)} style={s.alertClose}>×</button></div>}
+      <div style={{ fontSize: 12, color: '#64748B', marginBottom: 10 }}>
+        ※ 급여율은 % 단위 (예: 100 = 100%, 80 = 80%) · 상한/하한은 월 원 단위
+      </div>
+      {loading ? <div style={s.empty}>로딩 중…</div> : (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={s.table}>
+            <thead>
+              <tr>
+                <th style={{ ...s.th, width: 70 }}>연도</th>
+                <th style={{ ...s.th, width: 110, textAlign: 'right' }}>출산전후휴가<br/>급여상한(원)</th>
+                <th style={{ ...s.th, width: 90, textAlign: 'center' }}>배우자<br/>휴가일수</th>
+                <th style={{ ...s.th, width: 110, textAlign: 'right' }}>배우자휴가<br/>급여상한(원)</th>
+                <th style={{ ...s.th, width: 110, textAlign: 'right' }}>육아휴직<br/>상한 1~3월</th>
+                <th style={{ ...s.th, width: 110, textAlign: 'right' }}>육아휴직<br/>상한 4~6월</th>
+                <th style={{ ...s.th, width: 110, textAlign: 'right' }}>육아휴직<br/>상한 7월~</th>
+                <th style={{ ...s.th, width: 90, textAlign: 'center' }}>급여율<br/>1~6월(%)</th>
+                <th style={{ ...s.th, width: 90, textAlign: 'center' }}>급여율<br/>7월~(%)</th>
+                <th style={{ ...s.th, width: 100, textAlign: 'right' }}>하한액(원)</th>
+                <th style={s.th}>비고</th>
+                <th style={{ ...s.th, width: 50, textAlign: 'center' }}>삭제</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((it, idx) => (
+                <tr key={idx} style={{ background: it._dirty ? 'rgba(37,99,235,.03)' : 'transparent', borderBottom: '1px solid #F1F5F9' }}>
+                  <td style={s.td}>
+                    <input style={{ ...s.input, width: 58, textAlign: 'center' }}
+                      type="number" value={it.year}
+                      onChange={e => change(idx, 'year', Number(e.target.value))} />
+                  </td>
+                  <td style={s.td}>
+                    <input style={{ ...s.input, width: 100, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
+                      type="number" value={it.maternity_ei_cap ?? ''}
+                      onChange={e => change(idx, 'maternity_ei_cap', e.target.value === '' ? null : Number(e.target.value))} />
+                  </td>
+                  <td style={{ ...s.td, textAlign: 'center' }}>
+                    <input style={{ ...s.input, width: 60, textAlign: 'center' }}
+                      type="number" value={it.paternity_days ?? ''}
+                      onChange={e => change(idx, 'paternity_days', e.target.value === '' ? null : Number(e.target.value))} />
+                  </td>
+                  <td style={s.td}>
+                    <input style={{ ...s.input, width: 100, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
+                      type="number" value={it.paternity_ei_cap ?? ''}
+                      placeholder="미정"
+                      onChange={e => change(idx, 'paternity_ei_cap', e.target.value === '' ? null : Number(e.target.value))} />
+                  </td>
+                  {['parental_cap_1_3', 'parental_cap_4_6', 'parental_cap_7p'].map(key => (
+                    <td key={key} style={s.td}>
+                      <input style={{ ...s.input, width: 100, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
+                        type="number" value={it[key] ?? ''}
+                        onChange={e => change(idx, key, e.target.value === '' ? null : Number(e.target.value))} />
+                    </td>
+                  ))}
+                  {['parental_rate_1_6', 'parental_rate_7p'].map(key => (
+                    <td key={key} style={{ ...s.td, textAlign: 'center' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 2, justifyContent: 'center' }}>
+                        <input style={{ ...s.input, width: 56, textAlign: 'right' }}
+                          type="number" step="0.01" value={it[key] != null ? (Number(it[key]) * 100).toFixed(0) : ''}
+                          onChange={e => change(idx, key, e.target.value === '' ? null : Number(e.target.value) / 100)} />
+                        <span style={{ fontSize: 11, color: '#94A3B8' }}>%</span>
+                      </div>
+                    </td>
+                  ))}
+                  <td style={s.td}>
+                    <input style={{ ...s.input, width: 90, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
+                      type="number" value={it.parental_floor ?? ''}
+                      onChange={e => change(idx, 'parental_floor', e.target.value === '' ? null : Number(e.target.value))} />
+                  </td>
+                  <td style={s.td}>
+                    <input style={s.input} value={it.memo || ''}
+                      onChange={e => change(idx, 'memo', e.target.value)}
+                      placeholder="비고" />
+                  </td>
+                  <td style={{ ...s.td, textAlign: 'center' }}>
+                    <button style={s.btnDel} onClick={() => handleDelete(idx)}>삭제</button>
+                  </td>
+                </tr>
+              ))}
+              {items.length === 0 && (
+                <tr><td colSpan={12} style={s.empty}>등록된 출산육아급여기준이 없습니다.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }
