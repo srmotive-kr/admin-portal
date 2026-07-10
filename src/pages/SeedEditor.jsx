@@ -889,22 +889,19 @@ function parseWorkbook(wb) {
     const rows = XLSX.utils.sheet_to_json(wb.Sheets['보험요율'], { header: 1 })
     const header = rows[1] || []
     const ci = k => header.indexOf(k)
-    const toDate = v => {
-      if (!v) return null
-      const s = String(v).trim()
-      return s.length === 7 ? s + '-01' : s
-    }
+    const safeN = (v, def = 0) => { const n = Number(v ?? def); return isNaN(n) ? def : n }
+    const toYM  = v => { if (!v) return null; return String(v).trim().slice(0, 7) }
     for (let i = 2; i < rows.length; i++) {
       const r = rows[i]
       if (!r[ci('연도')]) continue
       insurance.push({
-        year: Number(r[ci('연도')]),
-        pension_rate: Number(r[ci('국민연금(%)')] || 0) / 100,
-        health_rate: Number(r[ci('건강보험(%)')] || 0) / 100,
-        care_rate: Number(r[ci('장기요양(%)')] || 0) / 100,
-        employ_rate: Number(r[ci('고용보험(%)')] || 0) / 100,
-        apply_from: toDate(r[ci('적용시작')]),
-        apply_to: toDate(r[ci('적용종료')]),
+        year:         safeN(r[ci('연도')]),
+        pension_rate: safeN(r[ci('국민연금(%)')]) / 100,
+        health_rate:  safeN(r[ci('건강보험(%)')]) / 100,
+        care_rate:    safeN(r[ci('장기요양(%)')]) / 100,
+        employ_rate:  safeN(r[ci('고용보험(%)')]) / 100,
+        apply_from:   toYM(r[ci('적용시작')]),
+        apply_to:     toYM(r[ci('적용종료')]),
         memo: r[ci('비고')] || '',
       })
     }
@@ -918,7 +915,9 @@ function parseWorkbook(wb) {
     for (let i = 2; i < rows.length; i++) {
       const r = rows[i]
       if (!r[ci('연도')]) continue
-      tax.push({ year: Number(r[ci('연도')]), range_min: Number(r[ci('과세최저(원)')] || 0), range_max: Number(r[ci('과세최고(원)')] || 0), dependents: Number(r[ci('공제가족수')] || 1), tax_amount: Number(r[ci('세액(원)')] || 0) })
+      const safeN2 = (v, def = 0) => { const n = Number(v ?? def); return isNaN(n) ? def : n }
+      const rmx = r[ci('과세최고(원)')]
+      tax.push({ year: safeN2(r[ci('연도')]), range_min: safeN2(r[ci('과세최저(원)')]), range_max: (rmx != null && rmx !== '' ? safeN2(rmx) : null), dependents: safeN2(r[ci('공제가족수')], 1), tax_amount: safeN2(r[ci('세액(원)')]) })
     }
   }
 
@@ -941,17 +940,19 @@ function parseWorkbook(wb) {
     for (let i = 2; i < rows.length; i++) {
       const r = rows[i]
       if (!r[ci('year')]) continue
+      const safeN3 = (v, def = 0) => { const n = Number(v ?? def); return isNaN(n) ? def : n }
+      const peiCap = r[ci('paternity_ei_cap')]
       leaveRates.push({
-        year:              Number(r[ci('year')]),
-        maternity_ei_cap:  Number(r[ci('maternity_ei_cap')]  || 0),
-        paternity_days:    Number(r[ci('paternity_days')]    || 0),
-        paternity_ei_cap:  r[ci('paternity_ei_cap')] != null ? Number(r[ci('paternity_ei_cap')]) : null,
-        parental_cap_1_3:  Number(r[ci('parental_cap_1_3')] || 0),
-        parental_cap_4_6:  Number(r[ci('parental_cap_4_6')] || 0),
-        parental_cap_7p:   Number(r[ci('parental_cap_7p')]  || 0),
-        parental_rate_1_6: Number(r[ci('parental_rate_1_6')]|| 1),
-        parental_rate_7p:  Number(r[ci('parental_rate_7p')] || 0),
-        parental_floor:    Number(r[ci('parental_floor')]    || 0),
+        year:              safeN3(r[ci('year')]),
+        maternity_ei_cap:  safeN3(r[ci('maternity_ei_cap')]),
+        paternity_days:    safeN3(r[ci('paternity_days')]),
+        paternity_ei_cap:  peiCap != null && peiCap !== '' ? safeN3(peiCap) : null,
+        parental_cap_1_3:  safeN3(r[ci('parental_cap_1_3')]),
+        parental_cap_4_6:  safeN3(r[ci('parental_cap_4_6')]),
+        parental_cap_7p:   safeN3(r[ci('parental_cap_7p')]),
+        parental_rate_1_6: safeN3(r[ci('parental_rate_1_6')], 1),
+        parental_rate_7p:  safeN3(r[ci('parental_rate_7p')]),
+        parental_floor:    safeN3(r[ci('parental_floor')]),
         memo:              r[ci('memo')] || null,
       })
     }
