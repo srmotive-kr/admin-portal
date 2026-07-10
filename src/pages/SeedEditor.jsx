@@ -178,8 +178,9 @@ function CodeTab({ groupCode, onGroupChange }) {
         </div>
 
         {msg && (
-          <div style={{ ...s.alert, ...(msg.type === 'error' ? s.alertError : s.alertOk) }}>
-            {msg.text}
+          <div style={{ ...s.alert, ...(msg.type === 'error' ? s.alertError : s.alertOk), display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span>{msg.text}</span>
+            <button onClick={() => setMsg(null)} style={s.alertClose}>×</button>
           </div>
         )}
 
@@ -390,7 +391,7 @@ function InsuranceTab() {
           {saving ? '저장 중…' : '💾 저장'}
         </button>
       </div>
-      {msg && <div style={{ ...s.alert, ...(msg.type === 'error' ? s.alertError : s.alertOk) }}>{msg.text}</div>}
+      {msg && <div style={{ ...s.alert, ...(msg.type === 'error' ? s.alertError : s.alertOk), display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}><span>{msg.text}</span><button onClick={() => setMsg(null)} style={s.alertClose}>×</button></div>}
       {loading ? <div style={s.empty}>로딩 중…</div> : (
         <div style={{ overflowX: 'auto' }}>
           <table style={s.table}>
@@ -487,7 +488,7 @@ function TaxTab() {
       <div style={{ marginBottom: 12, padding: '10px 14px', background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: 8, fontSize: 13, color: '#9A3412' }}>
         ℹ️ 세액표는 행 수가 많아 연도 단위로 관리합니다. 새 연도 데이터는 엑셀/JSON 파일 업로드 기능으로 추가하세요. (업로드 기능 추후 구현)
       </div>
-      {msg && <div style={{ ...s.alert, ...(msg.type === 'error' ? s.alertError : s.alertOk) }}>{msg.text}</div>}
+      {msg && <div style={{ ...s.alert, ...(msg.type === 'error' ? s.alertError : s.alertOk), display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}><span>{msg.text}</span><button onClick={() => setMsg(null)} style={s.alertClose}>×</button></div>}
       {loading ? <div style={s.empty}>로딩 중…</div> : (
         <table style={s.table}>
           <thead>
@@ -616,7 +617,7 @@ function HolidayTab() {
           </button>
         </div>
       </div>
-      {msg && <div style={{ ...s.alert, ...(msg.type === 'error' ? s.alertError : s.alertOk) }}>{msg.text}</div>}
+      {msg && <div style={{ ...s.alert, ...(msg.type === 'error' ? s.alertError : s.alertOk), display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}><span>{msg.text}</span><button onClick={() => setMsg(null)} style={s.alertClose}>×</button></div>}
       {loading ? <div style={s.empty}>로딩 중…</div> : (
         <table style={s.table}>
           <thead>
@@ -706,6 +707,7 @@ const s = {
   alert: { padding: '8px 14px', borderRadius: 8, fontSize: 13, marginBottom: 10 },
   alertOk:    { background: '#F0FDF4', border: '1px solid #BBF7D0', color: '#15803D' },
   alertError: { background: '#FEF2F2', border: '1px solid #FECACA', color: '#DC2626' },
+  alertClose: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, lineHeight: 1, padding: '0 2px', color: 'inherit', opacity: 0.5, flexShrink: 0 },
 
   table: { width: '100%', borderCollapse: 'collapse', background: '#fff' },
   th: {
