@@ -548,14 +548,20 @@ function TaxTab() {
     setUploading(true); setMsg(null)
     const text = await file.text()
     const lines = text.replace(/\r/g, '').trim().split('\n')
+    const parseAmt = v => {
+      if (!v || v.trim() === '' || v.trim() === '-') return 0
+      const n = Number(String(v).replace(/,/g, '').trim())
+      return isNaN(n) ? 0 : n
+    }
     const rows = []
     for (let i = 1; i < lines.length; i++) {
       const vals = lines[i].split(',')
-      if (vals.length < 13) continue
-      const range_min = Number(vals[0]); const range_max = Number(vals[1])
+      if (vals.length < 3) continue
+      const range_min = Number(vals[0])
+      const range_max = vals[1]?.trim() === '' ? null : (Number(vals[1]) || null)
+      if (isNaN(range_min)) continue
       for (let d = 1; d <= 11; d++) {
-        const v = vals[d + 1]?.trim()
-        rows.push({ year: yr, range_min, range_max, dependents: d, tax_amount: (!v || v === '-' ? 0 : Number(v)) })
+        rows.push({ year: yr, range_min, range_max, dependents: d, tax_amount: parseAmt(vals[d + 1]) })
       }
     }
     if (!rows.length) { setMsg({ type: 'error', text: 'CSV 파싱 결과가 없습니다. 양식을 확인하세요.' }); setUploading(false); e.target.value = ''; return }
