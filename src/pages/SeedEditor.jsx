@@ -1118,7 +1118,7 @@ const s = {
     borderBottom: '2px solid transparent', fontFamily: 'inherit',
     transition: 'color .15s',
   },
-  mainTabActive: { color: '#2563EB', borderBottomColor: '#2563EB' },
+  mainTabActive: { color: '#2563EB', borderBottom: '2px solid #2563EB' },
 
   groupSidebar: {
     width: 130, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 2,
