@@ -1,4 +1,5 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
+import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabaseClient'
 
 // ─── 코드 그룹 정의 ───────────────────────────────────────────────────────
@@ -12,6 +13,7 @@ const CODE_GROUPS = [
   { code: 'BONUS_TYPE',    label: '상여금구분',     hasTaxable: false, hasOrdinary: false },
   { code: 'LEAVE_TYPE',    label: '휴가구분',       hasTaxable: true,  taxableLabel: '유급여부', hasOrdinary: false },
   { code: 'OUTING_TYPE',   label: '외출/조퇴구분',  hasTaxable: true,  taxableLabel: '유급여부', hasOrdinary: false },
+  { code: 'ASSIGN_TYPE',   label: '발령구분',       hasTaxable: false, hasOrdinary: false },
   { code: 'RESIGN_REASON', label: '퇴직사유',       hasTaxable: false, hasOrdinary: false },
   { code: 'SEVERANCE_TYPE',label: '퇴직금구분',     hasTaxable: false, hasOrdinary: false },
 ]
@@ -34,11 +36,17 @@ const INS_COLS = [
 export default function SeedEditor() {
   const [mainTab, setMainTab]       = useState('코드')
   const [groupCode, setGroupCode]   = useState('RANK')
+  const [showBulk, setShowBulk]     = useState(false)
 
   return (
     <div>
-      <h2 style={s.pageTitle}>Seed 데이터 편집기</h2>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
+        <h2 style={{ ...s.pageTitle, marginBottom: 0 }}>Seed 데이터 편집기</h2>
+        <button style={{ ...s.btn('ghost'), fontSize: 13, padding: '7px 14px' }}
+          onClick={() => setShowBulk(true)}>📦 Excel 전체 업로드</button>
+      </div>
       <p style={s.desc}>온보딩 마법사에서 기본으로 제공되는 코드·보험요율·세액표·공휴일 데이터를 관리합니다.</p>
+      {showBulk && <BulkUploadModal onClose={() => setShowBulk(false)} />}
 
       {/* 메인 탭 */}
       <div style={s.mainTabs}>
@@ -397,7 +405,7 @@ function InsuranceTab() {
           <table style={s.table}>
             <thead>
               <tr>
-                <th style={{ ...s.th, width: 70 }}>연도</th>
+                <th style={{ ...s.th, width: 80 }}>연도</th>
                 <th style={{ ...s.th, width: 110, textAlign: 'center' }}>국민연금</th>
                 <th style={{ ...s.th, width: 110, textAlign: 'center' }}>건강보험</th>
                 <th style={{ ...s.th, width: 110, textAlign: 'center' }}>장기요양</th>
@@ -405,14 +413,14 @@ function InsuranceTab() {
                 <th style={{ ...s.th, width: 100 }}>적용시작</th>
                 <th style={{ ...s.th, width: 100 }}>적용종료</th>
                 <th style={s.th}>비고</th>
-                <th style={{ ...s.th, width: 56, textAlign: 'center' }}>삭제</th>
+                <th style={{ ...s.th, width: 64, textAlign: 'center' }}>삭제</th>
               </tr>
             </thead>
             <tbody>
               {items.map((it, idx) => (
                 <tr key={idx} style={{ background: it._dirty ? 'rgba(37,99,235,.03)' : 'transparent', borderBottom: '1px solid #F1F5F9' }}>
                   <td style={s.td}>
-                    <input style={{ ...s.input, width: 60, textAlign: 'center' }}
+                    <input style={{ ...s.input, width: 68, textAlign: 'center' }}
                       type="number" value={it.year}
                       onChange={e => change(idx, 'year', Number(e.target.value))} />
                   </td>
@@ -459,15 +467,16 @@ function InsuranceTab() {
 
 // ─── 세액표 탭 ──────────────────────────────────────────────────────────────
 function TaxTab() {
-  const [years, setYears]     = useState([])
-  const [loading, setLoading] = useState(true)
-  const [msg, setMsg]         = useState(null)
+  const [years, setYears]         = useState([])
+  const [loading, setLoading]     = useState(true)
+  const [msg, setMsg]             = useState(null)
+  const [popup, setPopup]         = useState(null)   // null | { year, rows }
+  const [uploading, setUploading] = useState(false)
+  const fileRef = useRef(null)
 
   const load = async () => {
     setLoading(true); setMsg(null)
-    const { data, error } = await supabase
-      .from('income_tax_table')
-      .select('year')
+    const { data, error } = await supabase.from('income_tax_table').select('year')
     if (error) { setMsg({ type: 'error', text: error.message }); setLoading(false); return }
     const counts = {}
     for (const r of data || []) counts[r.year] = (counts[r.year] || 0) + 1
@@ -483,10 +492,121 @@ function TaxTab() {
     load()
   }
 
+  const handleRowClick = async (year) => {
+    setPopup({ year, rows: null })
+    const { data, error } = await supabase
+      .from('income_tax_table')
+      .select('range_min,range_max,dependents,tax_amount')
+      .eq('year', year)
+      .order('range_min', { ascending: true })
+      .order('dependents', { ascending: true })
+    if (error) { setMsg({ type: 'error', text: error.message }); setPopup(null); return }
+    const map = new Map()
+    for (const r of data || []) {
+      const key = `${r.range_min}-${r.range_max}`
+      if (!map.has(key)) map.set(key, { range_min: r.range_min, range_max: r.range_max })
+      map.get(key)[`dep_${r.dependents}`] = r.tax_amount
+    }
+    setPopup({ year, rows: [...map.values()] })
+  }
+
+  const downloadTemplate = () => {
+    const header = 'range_min,range_max,dep_1,dep_2,dep_3,dep_4,dep_5,dep_6,dep_7,dep_8,dep_9,dep_10,dep_11'
+    const sample = '770000,775000,0,0,0,0,0,0,0,0,0,0,0\n775000,780000,19220,0,0,0,0,0,0,0,0,0,0'
+    const blob = new Blob(['﻿' + header + '\n' + sample], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = '세액표_업로드양식.csv'; a.click(); URL.revokeObjectURL(url)
+  }
+
+  const handleUpload = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const yearStr = window.prompt('업로드할 연도를 입력하세요 (예: 2026):', String(new Date().getFullYear()))
+    if (!yearStr) { e.target.value = ''; return }
+    const yr = Number(yearStr)
+    if (!yr || yr < 2000 || yr > 2100) { setMsg({ type: 'error', text: '올바른 연도를 입력하세요.' }); e.target.value = ''; return }
+    setUploading(true); setMsg(null)
+    const text = await file.text()
+    const lines = text.replace(/\r/g, '').trim().split('\n')
+    const rows = []
+    for (let i = 1; i < lines.length; i++) {
+      const vals = lines[i].split(',')
+      if (vals.length < 13) continue
+      const range_min = Number(vals[0]); const range_max = Number(vals[1])
+      for (let d = 1; d <= 11; d++) {
+        const v = vals[d + 1]?.trim()
+        rows.push({ year: yr, range_min, range_max, dependents: d, tax_amount: (!v || v === '-' ? 0 : Number(v)) })
+      }
+    }
+    if (!rows.length) { setMsg({ type: 'error', text: 'CSV 파싱 결과가 없습니다. 양식을 확인하세요.' }); setUploading(false); e.target.value = ''; return }
+    await supabase.from('income_tax_table').delete().eq('year', yr)
+    const CHUNK = 500
+    for (let i = 0; i < rows.length; i += CHUNK) {
+      const { error } = await supabase.from('income_tax_table').insert(rows.slice(i, i + CHUNK))
+      if (error) { setMsg({ type: 'error', text: error.message }); setUploading(false); e.target.value = ''; return }
+    }
+    setMsg({ type: 'success', text: `${yr}년 세액표 ${rows.length}건 업로드 완료` })
+    setUploading(false); load(); e.target.value = ''
+  }
+
   return (
     <div style={s.card}>
-      <div style={{ marginBottom: 12, padding: '10px 14px', background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: 8, fontSize: 13, color: '#9A3412' }}>
-        ℹ️ 세액표는 행 수가 많아 연도 단위로 관리합니다. 새 연도 데이터는 엑셀/JSON 파일 업로드 기능으로 추가하세요. (업로드 기능 추후 구현)
+      {popup && (
+        <div style={s.popupOverlay} onClick={() => setPopup(null)}>
+          <div style={s.popupDialog} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#1E293B' }}>
+                {popup.year}년 근로소득 간이세액표
+              </h3>
+              <button onClick={() => setPopup(null)} style={s.alertClose}>×</button>
+            </div>
+            {!popup.rows ? (
+              <div style={s.empty}>로딩 중…</div>
+            ) : (
+              <div style={{ overflowX: 'auto', maxHeight: 520, overflowY: 'auto' }}>
+                <table style={{ ...s.table, fontSize: 11, minWidth: 900 }}>
+                  <thead style={{ position: 'sticky', top: 0, background: '#FAFBFC', zIndex: 1 }}>
+                    <tr>
+                      <th style={{ ...s.th, width: 90, textAlign: 'right', whiteSpace: 'nowrap' }}>이상(원)</th>
+                      <th style={{ ...s.th, width: 90, textAlign: 'right', whiteSpace: 'nowrap' }}>미만(원)</th>
+                      {[1,2,3,4,5,6,7,8,9,10,11].map(n => (
+                        <th key={n} style={{ ...s.th, width: 65, textAlign: 'right', whiteSpace: 'nowrap' }}>{n}인</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {popup.rows.map((r, i) => (
+                      <tr key={i} style={{ borderBottom: '1px solid #F1F5F9' }}>
+                        <td style={{ ...s.td, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{r.range_min?.toLocaleString()}</td>
+                        <td style={{ ...s.td, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{r.range_max?.toLocaleString()}</td>
+                        {[1,2,3,4,5,6,7,8,9,10,11].map(n => (
+                          <td key={n} style={{ ...s.td, textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: r[`dep_${n}`] === 0 ? '#CBD5E1' : '#1E293B' }}>
+                            {r[`dep_${n}`] != null ? r[`dep_${n}`].toLocaleString() : '-'}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <div style={{ marginTop: 12, fontSize: 12, color: '#94A3B8', textAlign: 'right' }}>
+              총 {popup.rows?.length?.toLocaleString() ?? '…'}개 급여구간
+            </div>
+          </div>
+        </div>
+      )}
+      <div style={s.toolbar}>
+        <span style={s.cnt}>총 <strong style={{ color: '#2563EB' }}>{years.length}</strong>개 연도</span>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button style={s.btn('ghost')} onClick={load}>↺ 새로고침</button>
+          <button style={s.btn('ghost')} onClick={downloadTemplate}>📥 양식 다운로드</button>
+          <button style={s.btn('success')} onClick={() => fileRef.current?.click()} disabled={uploading}>
+            {uploading ? '업로드 중…' : '📤 CSV 업로드'}
+          </button>
+          <input ref={fileRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleUpload} />
+        </div>
       </div>
       {msg && <div style={{ ...s.alert, ...(msg.type === 'error' ? s.alertError : s.alertOk), display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}><span>{msg.text}</span><button onClick={() => setMsg(null)} style={s.alertClose}>×</button></div>}
       {loading ? <div style={s.empty}>로딩 중…</div> : (
@@ -496,18 +616,19 @@ function TaxTab() {
               <th style={{ ...s.th, width: 100 }}>연도</th>
               <th style={{ ...s.th, width: 120 }}>데이터 수</th>
               <th style={s.th}>설명</th>
-              <th style={{ ...s.th, width: 80, textAlign: 'center' }}>삭제</th>
+              <th style={{ ...s.th, width: 64, textAlign: 'center' }}>삭제</th>
             </tr>
           </thead>
           <tbody>
             {years.length === 0 ? (
               <tr><td colSpan={4} style={s.empty}>등록된 세액표가 없습니다.</td></tr>
             ) : years.map(({ year, count }) => (
-              <tr key={year} style={{ borderBottom: '1px solid #F1F5F9' }}>
+              <tr key={year} style={{ borderBottom: '1px solid #F1F5F9', cursor: 'pointer' }}
+                onClick={() => handleRowClick(year)}>
                 <td style={{ ...s.td, fontWeight: 700 }}>{year}년</td>
                 <td style={s.td}>{count.toLocaleString()}건</td>
-                <td style={{ ...s.td, color: '#64748B', fontSize: 12 }}>국세청 근로소득 간이세액표 {year}년 기준</td>
-                <td style={{ ...s.td, textAlign: 'center' }}>
+                <td style={{ ...s.td, color: '#64748B', fontSize: 12 }}>국세청 근로소득 간이세액표 {year}년 기준 — 클릭하면 내역 조회</td>
+                <td style={{ ...s.td, textAlign: 'center' }} onClick={e => e.stopPropagation()}>
                   <button style={s.btnDel} onClick={() => handleDelete(year)}>삭제</button>
                 </td>
               </tr>
@@ -528,6 +649,8 @@ function HolidayTab() {
   const [saving, setSaving]     = useState(false)
   const [msg, setMsg]           = useState(null)
   const [yearList, setYearList] = useState([])
+  const [uploading, setUploading] = useState(false)
+  const fileRef = useRef(null)
 
   const loadYears = async () => {
     const { data } = await supabase.from('holidays').select('year')
@@ -593,6 +716,39 @@ function HolidayTab() {
     setSaving(false); load()
   }
 
+  const downloadTemplate = () => {
+    const rows = [
+      'holiday_date,holiday_name,holiday_type',
+      `${year}-01-01,신정,NATIONAL`,
+      `${year}-03-01,삼일절,NATIONAL`,
+      `${year}-05-05,어린이날,NATIONAL`,
+    ].join('\n')
+    const blob = new Blob(['﻿' + rows], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = `공휴일_업로드양식_${year}.csv`; a.click(); URL.revokeObjectURL(url)
+  }
+
+  const handleUpload = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploading(true); setMsg(null)
+    const text = await file.text()
+    const lines = text.replace(/\r/g, '').trim().split('\n')
+    const rows = []
+    for (let i = 1; i < lines.length; i++) {
+      const [date, name, type] = lines[i].split(',').map(v => v.trim())
+      if (!date || !name) continue
+      rows.push({ year, holiday_date: date, holiday_name: name, holiday_type: type || 'NATIONAL' })
+    }
+    if (!rows.length) { setMsg({ type: 'error', text: 'CSV 파싱 결과가 없습니다. 양식을 확인하세요.' }); setUploading(false); e.target.value = ''; return }
+    await supabase.from('holidays').delete().eq('year', year)
+    const { error } = await supabase.from('holidays').insert(rows)
+    if (error) { setMsg({ type: 'error', text: error.message }); setUploading(false); e.target.value = ''; return }
+    setMsg({ type: 'success', text: `${year}년 공휴일 ${rows.length}건 업로드 완료` })
+    setUploading(false); load(); e.target.value = ''
+  }
+
   return (
     <div style={s.card}>
       <div style={s.toolbar}>
@@ -610,6 +766,11 @@ function HolidayTab() {
           </span>
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
+          <button style={s.btn('ghost')} onClick={downloadTemplate} disabled={saving || uploading}>📥 양식 다운로드</button>
+          <button style={s.btn('ghost')} onClick={() => fileRef.current?.click()} disabled={saving || uploading}>
+            {uploading ? '업로드 중…' : '📤 CSV 업로드'}
+          </button>
+          <input ref={fileRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleUpload} />
           <button style={s.btn('ghost')} onClick={load} disabled={saving}>↺ 새로고침</button>
           <button style={s.btn('success')} onClick={handleAdd} disabled={saving}>+ 공휴일 추가</button>
           <button style={s.btn('primary')} onClick={handleSave} disabled={saving || !dirty}>
@@ -625,7 +786,7 @@ function HolidayTab() {
               <th style={s.th}>날짜</th>
               <th style={s.th}>공휴일명</th>
               <th style={{ ...s.th, width: 120 }}>유형</th>
-              <th style={{ ...s.th, width: 56, textAlign: 'center' }}>삭제</th>
+              <th style={{ ...s.th, width: 64, textAlign: 'center' }}>삭제</th>
             </tr>
           </thead>
           <tbody>
@@ -648,7 +809,6 @@ function HolidayTab() {
                     onChange={e => change(idx, 'holiday_type', e.target.value)}>
                     <option value="NATIONAL">법정공휴일</option>
                     <option value="SUBSTITUTE">대체공휴일</option>
-                    <option value="CUSTOM">지정공휴일</option>
                   </select>
                 </td>
                 <td style={{ ...s.td, textAlign: 'center' }}>
@@ -663,16 +823,237 @@ function HolidayTab() {
   )
 }
 
+// ─── Excel 전체 업로드 모달 ──────────────────────────────────────────────────
+const CODE_SHEETS = ['직책명','직위명','고용형태구분','발령구분','업무구분','급여구분','수당구분','상여금구분','휴가구분','외출조퇴구분','퇴직사유','퇴직금구분']
+
+function parseWorkbook(wb) {
+  const codes = [], insurance = [], tax = [], holidays = [], skipped = []
+
+  for (const sheetName of CODE_SHEETS) {
+    if (!wb.SheetNames.includes(sheetName)) continue
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1 })
+    if (rows.length < 3) continue
+    const m = String(rows[0]?.[0] || '').match(/\[([A-Z_]+)\]/)
+    if (!m) continue
+    const groupCode = m[1]
+    const header = rows[1] || []
+    const ci = k => header.indexOf(k)
+    for (let i = 2; i < rows.length; i++) {
+      const r = rows[i]
+      const code = String(r[ci('코드')] ?? '').trim()
+      const name = String(r[ci('코드명')] ?? '').trim()
+      if (!code && !name) continue
+      codes.push({
+        group_code: groupCode,
+        code: code.toUpperCase(),
+        name,
+        sort_order: Number(r[ci('순서')] || (i - 1) * 10),
+        use_yn: r[ci('사용여부')] || 'Y',
+        is_system_default: r[ci('시스템기본')] === 'Y' ? 1 : 0,
+        taxable_yn: ci('과세여부') >= 0 ? (r[ci('과세여부')] || 'N') : 'N',
+        ordinary_yn: ci('통상임금포함') >= 0 ? (r[ci('통상임금포함')] || 'Y') : 'Y',
+      })
+    }
+  }
+
+  if (wb.SheetNames.includes('보험요율')) {
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets['보험요율'], { header: 1 })
+    const header = rows[1] || []
+    const ci = k => header.indexOf(k)
+    const toDate = v => {
+      if (!v) return null
+      const s = String(v).trim()
+      return s.length === 7 ? s + '-01' : s
+    }
+    for (let i = 2; i < rows.length; i++) {
+      const r = rows[i]
+      if (!r[ci('연도')]) continue
+      insurance.push({
+        year: Number(r[ci('연도')]),
+        pension_rate: Number(r[ci('국민연금(%)')] || 0) / 100,
+        health_rate: Number(r[ci('건강보험(%)')] || 0) / 100,
+        care_rate: Number(r[ci('장기요양(%)')] || 0) / 100,
+        employ_rate: Number(r[ci('고용보험(%)')] || 0) / 100,
+        apply_from: toDate(r[ci('적용시작')]),
+        apply_to: toDate(r[ci('적용종료')]),
+        memo: r[ci('비고')] || '',
+      })
+    }
+  }
+
+  for (const sn of wb.SheetNames.filter(n => n.startsWith('세액표') && n !== '세액표요약')) {
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1 })
+    const header = rows[1] || []
+    const ci = k => header.indexOf(k)
+    if (ci('연도') < 0 || ci('과세최저(원)') < 0) continue
+    for (let i = 2; i < rows.length; i++) {
+      const r = rows[i]
+      if (!r[ci('연도')]) continue
+      tax.push({ year: Number(r[ci('연도')]), range_min: Number(r[ci('과세최저(원)')] || 0), range_max: Number(r[ci('과세최고(원)')] || 0), dependents: Number(r[ci('공제가족수')] || 1), tax_amount: Number(r[ci('세액(원)')] || 0) })
+    }
+  }
+
+  if (wb.SheetNames.includes('공휴일')) {
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets['공휴일'], { header: 1 })
+    const header = rows[1] || []
+    const ci = k => header.indexOf(k)
+    for (let i = 2; i < rows.length; i++) {
+      const r = rows[i]
+      if (!r[ci('날짜')]) continue
+      const name = String(r[ci('공휴일명')] || '')
+      holidays.push({ year: Number(r[ci('연도')]), holiday_date: String(r[ci('날짜')]), holiday_name: name, holiday_type: name.includes('대체') ? 'SUBSTITUTE' : 'NATIONAL' })
+    }
+  }
+
+  if (wb.SheetNames.includes('출산육아급여기준')) skipped.push('출산육아급여기준 (별도 테이블 — 미지원)')
+
+  return { codes, insurance, tax, holidays, skipped }
+}
+
+function BulkUploadModal({ onClose }) {
+  const [preview, setPreview]     = useState(null)
+  const [importing, setImporting] = useState(false)
+  const [progress, setProgress]   = useState('')
+  const [msg, setMsg]             = useState(null)
+  const [done, setDone]           = useState(false)
+  const fileRef = useRef(null)
+
+  const handleFile = async (e) => {
+    const f = e.target.files?.[0]
+    if (!f) return
+    try {
+      const buf = await f.arrayBuffer()
+      const wb = XLSX.read(buf, { type: 'array' })
+      setPreview(parseWorkbook(wb))
+      setMsg(null)
+    } catch (err) {
+      setMsg({ type: 'error', text: 'Excel 파일 읽기 실패: ' + err.message })
+    }
+  }
+
+  const handleImport = async () => {
+    if (!preview || importing) return
+    setImporting(true); setMsg(null)
+    try {
+      if (preview.codes.length) {
+        const groups = [...new Set(preview.codes.map(c => c.group_code))]
+        for (const gc of groups) {
+          setProgress(`코드 [${gc}] 처리 중…`)
+          await supabase.from('seed_codes').delete().eq('group_code', gc)
+          const { error } = await supabase.from('seed_codes').insert(preview.codes.filter(c => c.group_code === gc))
+          if (error) throw error
+        }
+      }
+      if (preview.insurance.length) {
+        setProgress('보험요율 처리 중…')
+        const yrs = [...new Set(preview.insurance.map(r => r.year))]
+        for (const yr of yrs) await supabase.from('insurance_rates').delete().eq('year', yr)
+        const { error } = await supabase.from('insurance_rates').insert(preview.insurance)
+        if (error) throw error
+      }
+      if (preview.tax.length) {
+        const yrs = [...new Set(preview.tax.map(r => r.year))]
+        for (const yr of yrs) await supabase.from('income_tax_table').delete().eq('year', yr)
+        const CHUNK = 500
+        for (let i = 0; i < preview.tax.length; i += CHUNK) {
+          setProgress(`세액표 처리 중… ${Math.round(i / preview.tax.length * 100)}%`)
+          const { error } = await supabase.from('income_tax_table').insert(preview.tax.slice(i, i + CHUNK))
+          if (error) throw error
+        }
+      }
+      if (preview.holidays.length) {
+        setProgress('공휴일 처리 중…')
+        const yrs = [...new Set(preview.holidays.map(r => r.year))]
+        for (const yr of yrs) await supabase.from('holidays').delete().eq('year', yr)
+        const { error } = await supabase.from('holidays').insert(preview.holidays)
+        if (error) throw error
+      }
+      setProgress(''); setDone(true)
+      setMsg({ type: 'success', text: '전체 업로드 완료!' })
+    } catch (err) {
+      setMsg({ type: 'error', text: err.message })
+      setProgress('')
+    }
+    setImporting(false)
+  }
+
+  const taxYears = preview ? [...new Set(preview.tax.map(r => r.year))].sort().join(', ') : ''
+  const holYears = preview ? [...new Set(preview.holidays.map(r => r.year))].sort().join(', ') : ''
+  const insYears = preview ? preview.insurance.map(r => r.year).join(', ') : ''
+
+  return (
+    <div style={s.popupOverlay} onClick={!importing ? onClose : undefined}>
+      <div style={{ ...s.popupDialog, maxWidth: 540, width: '95vw' }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: '#1E293B' }}>📦 Excel 전체 업로드</div>
+            <div style={{ fontSize: 12, color: '#94A3B8', marginTop: 2 }}>seed_export_*.xlsx 파일로 전체 시드 데이터를 한번에 업로드합니다.</div>
+          </div>
+          {!importing && <button onClick={onClose} style={s.alertClose}>×</button>}
+        </div>
+
+        {!preview ? (
+          <div>
+            <div onClick={() => fileRef.current?.click()} style={{ border: '2px dashed #CBD5E1', borderRadius: 10, padding: '32px 20px', textAlign: 'center', cursor: 'pointer', color: '#475569', transition: 'border-color .15s' }}
+              onMouseEnter={e => e.currentTarget.style.borderColor = '#93C5FD'}
+              onMouseLeave={e => e.currentTarget.style.borderColor = '#CBD5E1'}>
+              <div style={{ fontSize: 32, marginBottom: 8 }}>📂</div>
+              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Excel 파일을 선택하세요</div>
+              <div style={{ fontSize: 12, color: '#94A3B8' }}>seed_export_YYYYMMDD_v*.xlsx</div>
+            </div>
+            <input ref={fileRef} type="file" accept=".xlsx" style={{ display: 'none' }} onChange={handleFile} />
+            {msg && <div style={{ ...s.alert, ...(msg.type === 'error' ? s.alertError : s.alertOk), marginTop: 12 }}>{msg.text}</div>}
+          </div>
+        ) : (
+          <div>
+            <div style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 8, padding: 14, marginBottom: 16, fontSize: 13 }}>
+              <div style={{ fontWeight: 700, color: '#1E293B', marginBottom: 8 }}>업로드 예정 데이터</div>
+              {[
+                ['코드', `${preview.codes.length}건 (${[...new Set(preview.codes.map(c => c.group_code))].length}개 그룹)`],
+                ['보험요율', `${preview.insurance.length}건 (${insYears}년)`],
+                ['세액표', `${preview.tax.length}건 (${taxYears}년)`],
+                ['공휴일', `${preview.holidays.length}건 (${holYears}년)`],
+              ].map(([k, v]) => (
+                <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid #F1F5F9' }}>
+                  <span style={{ color: '#475569' }}>{k}</span>
+                  <span style={{ fontWeight: 600, color: '#1E293B' }}>{v}</span>
+                </div>
+              ))}
+              {preview.skipped.length > 0 && (
+                <div style={{ marginTop: 8, fontSize: 11, color: '#94A3B8' }}>건너뜀: {preview.skipped.join(' / ')}</div>
+              )}
+            </div>
+            <div style={{ padding: '8px 12px', background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: 6, fontSize: 12, color: '#9A3412', marginBottom: 16 }}>
+              ⚠️ 기존 데이터를 삭제 후 대체합니다. 되돌릴 수 없습니다.
+            </div>
+            {msg && <div style={{ ...s.alert, ...(msg.type === 'error' ? s.alertError : s.alertOk), marginBottom: 12 }}>{msg.text}</div>}
+            {progress && <div style={{ fontSize: 12, color: '#2563EB', marginBottom: 8, textAlign: 'center' }}>{progress}</div>}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              {!done && <button style={s.btn('ghost')} onClick={() => setPreview(null)} disabled={importing}>다시 선택</button>}
+              {!done
+                ? <button style={s.btn('primary')} onClick={handleImport} disabled={importing}>
+                    {importing ? '업로드 중…' : '업로드 확인'}
+                  </button>
+                : <button style={s.btn('primary')} onClick={onClose}>닫기</button>
+              }
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ─── 스타일 ──────────────────────────────────────────────────────────────────
 const s = {
   pageTitle: { fontSize: 22, fontWeight: 700, color: '#1E293B', marginBottom: 6 },
   desc:      { fontSize: 13, color: '#94A3B8', marginBottom: 20 },
 
-  mainTabs: { display: 'flex', gap: 4, marginBottom: 20, borderBottom: '2px solid #E2E8F0', paddingBottom: 0 },
+  mainTabs: { display: 'flex', gap: 4, marginBottom: 20 },
   mainTab:  {
     padding: '9px 20px', border: 'none', background: 'transparent',
     fontSize: 14, fontWeight: 600, cursor: 'pointer', color: '#64748B',
-    borderBottom: '2px solid transparent', marginBottom: -2, fontFamily: 'inherit',
+    borderBottom: '2px solid transparent', fontFamily: 'inherit',
     transition: 'color .15s',
   },
   mainTabActive: { color: '#2563EB', borderBottomColor: '#2563EB' },
@@ -682,12 +1063,12 @@ const s = {
     borderRight: '1px solid #E2E8F0', paddingRight: 12, marginRight: 16,
   },
   groupBtn: {
-    padding: '8px 12px', border: '1px solid transparent', borderRadius: 8,
+    padding: '8px 12px', border: 'none', borderRadius: 8,
     background: 'transparent', fontSize: 13, cursor: 'pointer', color: '#475569',
     textAlign: 'left', fontFamily: 'inherit', fontWeight: 500,
     transition: 'all .12s',
   },
-  groupBtnActive: { background: '#EFF6FF', borderColor: '#93C5FD', color: '#2563EB', fontWeight: 700 },
+  groupBtnActive: { background: '#EFF6FF', boxShadow: 'inset 0 0 0 1.5px #93C5FD', color: '#2563EB', fontWeight: 700 },
 
   card: { background: '#fff', borderRadius: 12, padding: 20, boxShadow: '0 1px 4px rgba(0,0,0,.06)' },
 
@@ -748,5 +1129,14 @@ const s = {
   btnDel: {
     padding: '4px 10px', background: '#EF4444', color: '#fff',
     border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontFamily: 'inherit',
+    whiteSpace: 'nowrap',
+  },
+  popupOverlay: {
+    position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+  },
+  popupDialog: {
+    background: '#fff', borderRadius: 12, padding: 24,
+    boxShadow: '0 8px 32px rgba(0,0,0,.18)', minWidth: 400, maxWidth: '95vw',
   },
 }
