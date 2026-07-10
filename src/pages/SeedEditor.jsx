@@ -18,7 +18,7 @@ const CODE_GROUPS = [
   { code: 'SEVERANCE_TYPE',label: '퇴직금구분',     hasTaxable: false, hasOrdinary: false },
 ]
 
-const MAIN_TABS = ['코드', '보험요율', '세액표', '공휴일', '출산육아급여']
+const MAIN_TABS = ['코드', '보험요율', '근로소득세액표', '공휴일', '출산육아급여']
 
 // ─── 보험요율 컬럼 정의 ─────────────────────────────────────────────────────
 const INS_COLS = [
@@ -59,9 +59,9 @@ export default function SeedEditor() {
       {mainTab === '코드' && (
         <CodeTab groupCode={groupCode} onGroupChange={setGroupCode} />
       )}
-      {mainTab === '보험요율'   && <InsuranceTab />}
-      {mainTab === '세액표'     && <TaxTab />}
-      {mainTab === '공휴일'     && <HolidayTab />}
+      {mainTab === '보험요율'      && <InsuranceTab />}
+      {mainTab === '근로소득세액표' && <TaxTab />}
+      {mainTab === '공휴일'        && <HolidayTab />}
       {mainTab === '출산육아급여' && <LeaveRateTab />}
     </div>
   )
@@ -460,47 +460,68 @@ function InsuranceTab() {
   )
 }
 
-// ─── 세액표 탭 ──────────────────────────────────────────────────────────────
+// ─── 근로소득세액표 탭 (서브탭: 간이세액표 / 초과세율표) ──────────────────────
 function TaxTab() {
-  const [years, setYears]         = useState([])
+  const [taxSubTab, setTaxSubTab] = useState('간이세액표')
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 4, marginBottom: 16, borderBottom: '1px solid #E2E8F0' }}>
+        {['간이세액표', '초과세율표'].map(t => (
+          <button key={t}
+            style={{ padding: '6px 18px', border: 'none', background: 'transparent',
+              fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+              color: taxSubTab === t ? '#2563EB' : '#64748B',
+              borderBottom: taxSubTab === t ? '2px solid #2563EB' : '2px solid transparent',
+              marginBottom: -1, transition: 'color .15s' }}
+            onClick={() => setTaxSubTab(t)}>{t}</button>
+        ))}
+      </div>
+      {taxSubTab === '간이세액표' && <SimpleTaxSection />}
+      {taxSubTab === '초과세율표' && <ExcessRateSection />}
+    </div>
+  )
+}
+
+// ─── 간이세액표 섹션 ─────────────────────────────────────────────────────────
+function SimpleTaxSection() {
+  const [afList, setAfList]       = useState([])   // [{ applyFrom, count }]
   const [loading, setLoading]     = useState(true)
   const [msg, setMsg]             = useState(null)
-  const [popup, setPopup]         = useState(null)   // null | { year, rows }
+  const [popup, setPopup]         = useState(null) // null | { applyFrom, rows }
   const [uploading, setUploading] = useState(false)
   const fileRef = useRef(null)
 
   const load = async () => {
     setLoading(true); setMsg(null)
-    // 전체 연도 목록 (최대 10만행으로 limit 높여서 year 필드만 조회)
-    const { data: rawYears, error } = await supabase
-      .from('income_tax_table').select('year').limit(200000)
+    const { data: afRows, error } = await supabase
+      .from('income_tax_table').select('apply_from').limit(200000)
     if (error) { setMsg({ type: 'error', text: error.message }); setLoading(false); return }
     const counts = {}
-    for (const r of rawYears || []) counts[r.year] = (counts[r.year] || 0) + 1
-    // limit을 넘는 연도는 정확한 카운트를 별도 요청
-    const distinctYears = Object.keys(counts).map(Number).sort((a, b) => b - a)
-    const yearList = []
-    for (const yr of distinctYears) {
+    for (const r of afRows || []) counts[r.apply_from] = (counts[r.apply_from] || 0) + 1
+    const distinctAfs = Object.keys(counts).sort((a, b) => b.localeCompare(a))
+    const list = []
+    for (const af of distinctAfs) {
       const { count: exact } = await supabase
         .from('income_tax_table')
         .select('*', { count: 'exact', head: true })
-        .eq('year', yr)
-      yearList.push({ year: yr, count: exact ?? counts[yr] })
+        .eq('apply_from', af)
+      list.push({ applyFrom: af, count: exact ?? counts[af] })
     }
-    setYears(yearList)
+    setAfList(list)
     setLoading(false)
   }
   useEffect(() => { load() }, [])
 
-  const handleDelete = async (year) => {
-    if (!window.confirm(`${year}년 세액표 전체(${years.find(y => y.year === year)?.count || 0}건)를 삭제하시겠습니까?`)) return
-    const { error } = await supabase.from('income_tax_table').delete().eq('year', year)
+  const handleDelete = async (applyFrom) => {
+    const item = afList.find(y => y.applyFrom === applyFrom)
+    if (!window.confirm(`${applyFrom} 세액표 전체(${item?.count || 0}건)를 삭제하시겠습니까?`)) return
+    const { error } = await supabase.from('income_tax_table').delete().eq('apply_from', applyFrom)
     if (error) { setMsg({ type: 'error', text: error.message }); return }
     load()
   }
 
-  const handleRowClick = async (year) => {
-    setPopup({ year, rows: null })
+  const handleRowClick = async (applyFrom) => {
+    setPopup({ applyFrom, rows: null })
     try {
       const BATCH = 1000
       let allData = [], from = 0
@@ -508,7 +529,7 @@ function TaxTab() {
         const { data, error } = await supabase
           .from('income_tax_table')
           .select('range_min,range_max,dependents,tax_amount')
-          .eq('year', year)
+          .eq('apply_from', applyFrom)
           .order('range_min', { ascending: true })
           .order('dependents', { ascending: true })
           .range(from, from + BATCH - 1)
@@ -519,77 +540,84 @@ function TaxTab() {
       }
       const map = new Map()
       for (const r of allData) {
-        const key = `${r.range_min}-${r.range_max}`
+        const key = `${r.range_min}-${r.range_max ?? 'anchor'}`
         if (!map.has(key)) map.set(key, { range_min: r.range_min, range_max: r.range_max })
         map.get(key)[`dep_${r.dependents}`] = r.tax_amount
       }
-      setPopup({ year, rows: [...map.values()] })
+      setPopup({ applyFrom, rows: [...map.values()] })
     } catch (err) {
       setMsg({ type: 'error', text: err.message }); setPopup(null)
     }
   }
 
   const downloadTemplate = () => {
-    const header = 'range_min,range_max,dep_1,dep_2,dep_3,dep_4,dep_5,dep_6,dep_7,dep_8,dep_9,dep_10,dep_11'
-    const sample = '770000,775000,0,0,0,0,0,0,0,0,0,0,0\n775000,780000,19220,0,0,0,0,0,0,0,0,0,0'
-    const blob = new Blob(['﻿' + header + '\n' + sample], { type: 'text/csv;charset=utf-8;' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url; a.download = '세액표_업로드양식.csv'; a.click(); URL.revokeObjectURL(url)
+    const today = new Date().toISOString().slice(0, 10)
+    const headers = ['적용일자', '이상(원)', '미만(원)', '1인', '2인', '3인', '4인', '5인', '6인', '7인', '8인', '9인', '10인', '11인']
+    const sample1 = [today, 770000, 775000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    const sample2 = ['', 775000, 780000, 19220, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    const ws = XLSX.utils.aoa_to_sheet([headers, sample1, sample2])
+    const wb2 = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb2, ws, '세액표')
+    XLSX.writeFile(wb2, '간이세액표_업로드양식.xlsx')
   }
 
   const handleUpload = async (e) => {
     const file = e.target.files?.[0]
     if (!file) return
-    const yearStr = window.prompt('업로드할 연도를 입력하세요 (예: 2026):', String(new Date().getFullYear()))
-    if (!yearStr) { e.target.value = ''; return }
-    const yr = Number(yearStr)
-    if (!yr || yr < 2000 || yr > 2100) { setMsg({ type: 'error', text: '올바른 연도를 입력하세요.' }); e.target.value = ''; return }
     setUploading(true); setMsg(null)
-    const text = await file.text()
-    const lines = text.replace(/\r/g, '').trim().split('\n')
-    const parseCSVLine = line => {
-      const res = []; let cur = ''; let inQ = false
-      for (let i = 0; i < line.length; i++) {
-        if (line[i] === '"') { inQ = !inQ }
-        else if (line[i] === ',' && !inQ) { res.push(cur); cur = '' }
-        else { cur += line[i] }
+    try {
+      const buf = await file.arrayBuffer()
+      const wb2 = XLSX.read(buf, { type: 'array' })
+      const ws = wb2.Sheets['세액표']
+      if (!ws) throw new Error("'세액표' 시트를 찾을 수 없습니다.")
+      const rawRows = XLSX.utils.sheet_to_json(ws, { header: 1 })
+      // Row 0: 헤더 / Row 1+: 데이터
+      // A(0)=적용일자, B(1)=이상(원), C(2)=미만(원), D(3)~N(13)=1인~11인
+      const safeN = (v, def = 0) => { const n = Number(v ?? def); return isNaN(n) ? def : n }
+      const rowsByAf = new Map()
+      let lastAf = null
+      for (let i = 1; i < rawRows.length; i++) {
+        const r = rawRows[i]
+        const af = String(r[0] ?? '').trim()
+        if (af) lastAf = af
+        if (!lastAf) continue
+        const rmin = safeN(r[1], NaN)
+        if (isNaN(rmin)) continue
+        const rmxRaw = r[2]
+        const rmax = (rmxRaw == null || String(rmxRaw).trim() === '') ? null : safeN(rmxRaw)
+        if (!rowsByAf.has(lastAf)) rowsByAf.set(lastAf, [])
+        for (let d = 1; d <= 11; d++) {
+          rowsByAf.get(lastAf).push({ apply_from: lastAf, range_min: rmin, range_max: rmax, dependents: d, tax_amount: safeN(r[2 + d]) })
+        }
       }
-      res.push(cur); return res
-    }
-    const parseNum = v => { const n = Number(String(v ?? '').replace(/,/g, '').trim()); return isNaN(n) ? NaN : n }
-    const parseAmt = v => { const n = parseNum(v); return (isNaN(n) || String(v).trim() === '-') ? 0 : n }
-    const rows = []
-    for (let i = 1; i < lines.length; i++) {
-      const vals = parseCSVLine(lines[i])
-      if (vals.length < 3) continue
-      const range_min = parseNum(vals[0])
-      if (isNaN(range_min)) continue
-      const rmx = parseNum(vals[1])
-      const range_max = isNaN(rmx) || rmx === 0 ? null : rmx
-      for (let d = 1; d <= 11; d++) {
-        rows.push({ year: yr, range_min, range_max, dependents: d, tax_amount: parseAmt(vals[d + 1]) })
+      if (!rowsByAf.size) throw new Error('업로드 데이터가 없습니다. 양식을 확인하세요.')
+      for (const [af, rows] of rowsByAf) {
+        const { error: delErr } = await supabase.from('income_tax_table').delete().eq('apply_from', af)
+        if (delErr) throw delErr
+        const CHUNK = 500
+        for (let i = 0; i < rows.length; i += CHUNK) {
+          const { error } = await supabase.from('income_tax_table').insert(rows.slice(i, i + CHUNK))
+          if (error) throw error
+        }
       }
+      const totalRows = [...rowsByAf.values()].reduce((s, a) => s + a.length, 0)
+      const afs = [...rowsByAf.keys()].join(', ')
+      setMsg({ type: 'success', text: `${afs} 세액표 ${totalRows}건 업로드 완료` })
+      load()
+    } catch (err) {
+      setMsg({ type: 'error', text: err.message })
     }
-    if (!rows.length) { setMsg({ type: 'error', text: 'CSV 파싱 결과가 없습니다. 양식을 확인하세요.' }); setUploading(false); e.target.value = ''; return }
-    await supabase.from('income_tax_table').delete().eq('year', yr)
-    const CHUNK = 500
-    for (let i = 0; i < rows.length; i += CHUNK) {
-      const { error } = await supabase.from('income_tax_table').insert(rows.slice(i, i + CHUNK))
-      if (error) { setMsg({ type: 'error', text: error.message }); setUploading(false); e.target.value = ''; return }
-    }
-    setMsg({ type: 'success', text: `${yr}년 세액표 ${rows.length}건 업로드 완료` })
-    setUploading(false); load(); e.target.value = ''
+    setUploading(false); e.target.value = ''
   }
 
   return (
     <div style={s.card}>
       {popup && (
         <div style={s.popupOverlay} onClick={() => setPopup(null)}>
-          <div style={s.popupDialog} onClick={e => e.stopPropagation()}>
+          <div style={s.popupDialog} onClick={ev => ev.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
               <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#1E293B' }}>
-                {popup.year}년 근로소득 간이세액표
+                근로소득 간이세액표 ({popup.applyFrom} 시행)
               </h3>
               <button onClick={() => setPopup(null)} style={s.alertClose}>×</button>
             </div>
@@ -611,7 +639,9 @@ function TaxTab() {
                     {popup.rows.map((r, i) => (
                       <tr key={i} style={{ borderBottom: '1px solid #F1F5F9' }}>
                         <td style={{ ...s.td, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{r.range_min?.toLocaleString()}</td>
-                        <td style={{ ...s.td, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{r.range_max?.toLocaleString()}</td>
+                        <td style={{ ...s.td, textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: r.range_max == null ? '#2563EB' : undefined }}>
+                          {r.range_max == null ? '정액' : r.range_max?.toLocaleString()}
+                        </td>
                         {[1,2,3,4,5,6,7,8,9,10,11].map(n => (
                           <td key={n} style={{ ...s.td, textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: r[`dep_${n}`] === 0 ? '#CBD5E1' : '#1E293B' }}>
                             {r[`dep_${n}`] != null ? r[`dep_${n}`].toLocaleString() : '-'}
@@ -630,14 +660,14 @@ function TaxTab() {
         </div>
       )}
       <div style={s.toolbar}>
-        <span style={s.cnt}>총 <strong style={{ color: '#2563EB' }}>{years.length}</strong>개 연도</span>
+        <span style={s.cnt}>총 <strong style={{ color: '#2563EB' }}>{afList.length}</strong>개 시행일</span>
         <div style={{ display: 'flex', gap: 6 }}>
           <button style={s.btn('ghost')} onClick={load}>↺ 새로고침</button>
           <button style={s.btn('ghost')} onClick={downloadTemplate}>📥 양식 다운로드</button>
           <button style={s.btn('success')} onClick={() => fileRef.current?.click()} disabled={uploading}>
-            {uploading ? '업로드 중…' : '📤 CSV 업로드'}
+            {uploading ? '업로드 중…' : '📤 Excel 업로드'}
           </button>
-          <input ref={fileRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleUpload} />
+          <input ref={fileRef} type="file" accept=".xlsx" style={{ display: 'none' }} onChange={handleUpload} />
         </div>
       </div>
       {msg && <div style={{ ...s.alert, ...(msg.type === 'error' ? s.alertError : s.alertOk), display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}><span>{msg.text}</span><button onClick={() => setMsg(null)} style={s.alertClose}>×</button></div>}
@@ -645,29 +675,167 @@ function TaxTab() {
         <table style={s.table}>
           <thead>
             <tr>
-              <th style={{ ...s.th, width: 100 }}>연도</th>
+              <th style={{ ...s.th, width: 130 }}>시행일</th>
               <th style={{ ...s.th, width: 120 }}>데이터 수</th>
               <th style={s.th}>설명</th>
               <th style={{ ...s.th, width: 64, textAlign: 'center' }}>삭제</th>
             </tr>
           </thead>
           <tbody>
-            {years.length === 0 ? (
+            {afList.length === 0 ? (
               <tr><td colSpan={4} style={s.empty}>등록된 세액표가 없습니다.</td></tr>
-            ) : years.map(({ year, count }) => (
-              <tr key={year} style={{ borderBottom: '1px solid #F1F5F9', cursor: 'pointer' }}
-                onClick={() => handleRowClick(year)}>
-                <td style={{ ...s.td, fontWeight: 700 }}>{year}년</td>
+            ) : afList.map(({ applyFrom, count }) => (
+              <tr key={applyFrom} style={{ borderBottom: '1px solid #F1F5F9', cursor: 'pointer' }}
+                onClick={() => handleRowClick(applyFrom)}>
+                <td style={{ ...s.td, fontWeight: 700 }}>{applyFrom}</td>
                 <td style={s.td}>{count.toLocaleString()}건</td>
-                <td style={{ ...s.td, color: '#64748B', fontSize: 12 }}>국세청 근로소득 간이세액표 {year}년 기준 — 클릭하면 내역 조회</td>
-                <td style={{ ...s.td, textAlign: 'center' }} onClick={e => e.stopPropagation()}>
-                  <button style={s.btnDel} onClick={() => handleDelete(year)}>삭제</button>
+                <td style={{ ...s.td, color: '#64748B', fontSize: 12 }}>
+                  국세청 근로소득 간이세액표 {applyFrom} 시행 — 클릭하면 내역 조회
+                </td>
+                <td style={{ ...s.td, textAlign: 'center' }} onClick={ev => ev.stopPropagation()}>
+                  <button style={s.btnDel} onClick={() => handleDelete(applyFrom)}>삭제</button>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
       )}
+    </div>
+  )
+}
+
+// ─── 초과세율표 섹션 ─────────────────────────────────────────────────────────
+function ExcessRateSection() {
+  const [rows, setRows]       = useState([])
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving]   = useState(false)
+  const [dirty, setDirty]     = useState(false)
+  const [msg, setMsg]         = useState(null)
+
+  const load = async () => {
+    setLoading(true); setMsg(null)
+    const { data, error } = await supabase
+      .from('income_tax_excess_rate').select('*')
+      .order('apply_from', { ascending: false })
+      .order('threshold_from', { ascending: true })
+    if (error) { setMsg({ type: 'error', text: error.message }); setLoading(false); return }
+    setRows(data || []); setDirty(false); setLoading(false)
+  }
+  useEffect(() => { load() }, [])
+
+  const change = (idx, key, val) => {
+    setRows(prev => prev.map((r, i) => i === idx ? { ...r, [key]: val, _dirty: true } : r))
+    setDirty(true)
+  }
+
+  const handleAdd = () => {
+    const lastAf = rows[0]?.apply_from ?? new Date().toISOString().slice(0, 10)
+    setRows(prev => [...prev, {
+      id: null, apply_from: lastAf,
+      threshold_from: 0, threshold_to: null,
+      accumulated: 0, factor: 0.98, rate: 0, _dirty: true,
+    }])
+    setDirty(true)
+  }
+
+  const handleDelete = async (idx) => {
+    const r = rows[idx]
+    if (r.id !== null) {
+      if (!window.confirm(`threshold_from=${Number(r.threshold_from).toLocaleString()} 행을 삭제하시겠습니까?`)) return
+      const { error } = await supabase.from('income_tax_excess_rate').delete().eq('id', r.id)
+      if (error) { setMsg({ type: 'error', text: error.message }); return }
+    }
+    setRows(prev => prev.filter((_, i) => i !== idx)); setDirty(true)
+  }
+
+  const handleSave = async () => {
+    const toSave = rows.filter(r => r._dirty)
+    if (!toSave.length) return
+    setSaving(true); setMsg(null)
+    for (const r of toSave) {
+      const { _dirty, id, created_at, ...payload } = r
+      payload.threshold_from = Number(payload.threshold_from)
+      payload.threshold_to   = (payload.threshold_to === '' || payload.threshold_to == null) ? null : Number(payload.threshold_to)
+      payload.accumulated    = Number(payload.accumulated)
+      payload.factor         = Number(payload.factor)
+      payload.rate           = Number(payload.rate)
+      const { error } = id === null
+        ? await supabase.from('income_tax_excess_rate').insert(payload)
+        : await supabase.from('income_tax_excess_rate').update(payload).eq('id', id)
+      if (error) { setMsg({ type: 'error', text: error.message }); setSaving(false); return }
+    }
+    setMsg({ type: 'success', text: `${toSave.length}건 저장 완료` })
+    setSaving(false); load()
+  }
+
+  return (
+    <div style={s.card}>
+      <div style={s.toolbar}>
+        <span style={s.cnt}>총 <strong style={{ color: '#2563EB' }}>{rows.length}</strong>개 구간</span>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button style={s.btn('ghost')} onClick={load}>↺ 새로고침</button>
+          <button style={s.btn('ghost')} onClick={handleAdd}>+ 행 추가</button>
+          <button style={s.btn('primary')} onClick={handleSave} disabled={saving || !dirty}>
+            {saving ? '저장 중…' : '저장'}
+          </button>
+        </div>
+      </div>
+      {msg && <div style={{ ...s.alert, ...(msg.type === 'error' ? s.alertError : s.alertOk), display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}><span>{msg.text}</span><button onClick={() => setMsg(null)} style={s.alertClose}>×</button></div>}
+      {loading ? <div style={s.empty}>로딩 중…</div> : (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ ...s.table, minWidth: 780 }}>
+            <thead>
+              <tr>
+                <th style={{ ...s.th, width: 120 }}>시행일</th>
+                <th style={{ ...s.th, width: 130, textAlign: 'right' }}>구간시작(원) 초과</th>
+                <th style={{ ...s.th, width: 130, textAlign: 'right' }}>구간끝(원) 이하</th>
+                <th style={{ ...s.th, width: 120, textAlign: 'right' }}>누적세액(원)</th>
+                <th style={{ ...s.th, width: 90, textAlign: 'right' }}>보정비율</th>
+                <th style={{ ...s.th, width: 90, textAlign: 'right' }}>세율</th>
+                <th style={{ ...s.th, width: 64, textAlign: 'center' }}>삭제</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 ? (
+                <tr><td colSpan={7} style={s.empty}>등록된 초과세율 구간이 없습니다.</td></tr>
+              ) : rows.map((r, i) => (
+                <tr key={r.id ?? `new-${i}`} style={{ borderBottom: '1px solid #F1F5F9', background: r._dirty ? '#FFFBEB' : undefined }}>
+                  <td style={s.td}>
+                    <input value={r.apply_from} onChange={e => change(i, 'apply_from', e.target.value)}
+                      style={{ ...s.input, width: 110 }} placeholder="YYYY-MM-DD" />
+                  </td>
+                  <td style={s.td}>
+                    <input type="number" value={r.threshold_from} onChange={e => change(i, 'threshold_from', e.target.value)}
+                      style={{ ...s.input, textAlign: 'right', width: 120 }} />
+                  </td>
+                  <td style={s.td}>
+                    <input type="number" value={r.threshold_to ?? ''} onChange={e => change(i, 'threshold_to', e.target.value === '' ? null : e.target.value)}
+                      style={{ ...s.input, textAlign: 'right', width: 120 }} placeholder="(최고 구간)" />
+                  </td>
+                  <td style={s.td}>
+                    <input type="number" value={r.accumulated} onChange={e => change(i, 'accumulated', e.target.value)}
+                      style={{ ...s.input, textAlign: 'right', width: 110 }} />
+                  </td>
+                  <td style={s.td}>
+                    <input type="number" step="0.01" value={r.factor} onChange={e => change(i, 'factor', e.target.value)}
+                      style={{ ...s.input, textAlign: 'right', width: 80 }} />
+                  </td>
+                  <td style={s.td}>
+                    <input type="number" step="0.01" value={r.rate} onChange={e => change(i, 'rate', e.target.value)}
+                      style={{ ...s.input, textAlign: 'right', width: 80 }} />
+                  </td>
+                  <td style={{ ...s.td, textAlign: 'center' }}>
+                    <button style={s.btnDel} onClick={() => handleDelete(i)}>삭제</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <div style={{ marginTop: 10, fontSize: 11, color: '#94A3B8' }}>
+        ※ 구간시작 초과 ~ 구간끝 이하 / 구간끝 비워두면 최고 구간(무한대) / 보정비율 0.98 = 98%
+      </div>
     </div>
   )
 }
@@ -863,7 +1031,7 @@ function HolidayTab() {
 const CODE_SHEETS = ['직책명','직위명','고용형태구분','발령구분','업무구분','급여구분','수당구분','상여금구분','휴가구분','외출조퇴구분','퇴직사유','퇴직금구분']
 
 function parseWorkbook(wb) {
-  const codes = [], insurance = [], tax = [], holidays = [], leaveRates = [], skipped = []
+  const codes = [], insurance = [], tax = [], holidays = [], leaveRates = [], excessRate = [], skipped = []
 
   for (const sheetName of CODE_SHEETS) {
     if (!wb.SheetNames.includes(sheetName)) continue
@@ -914,17 +1082,39 @@ function parseWorkbook(wb) {
     }
   }
 
-  for (const sn of wb.SheetNames.filter(n => n.startsWith('세액표') && n !== '세액표요약')) {
-    const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1 })
-    const header = rows[1] || []
-    const ci = k => header.indexOf(k)
-    if (ci('연도') < 0 || ci('과세최저(원)') < 0) continue
-    for (let i = 2; i < rows.length; i++) {
-      const r = rows[i]
-      if (!r[ci('연도')]) continue
-      const safeN2 = (v, def = 0) => { const n = Number(v ?? def); return isNaN(n) ? def : n }
-      const rmx = r[ci('과세최고(원)')]
-      tax.push({ year: safeN2(r[ci('연도')]), range_min: safeN2(r[ci('과세최저(원)')]), range_max: (rmx != null && rmx !== '' ? safeN2(rmx) : null), dependents: safeN2(r[ci('공제가족수')], 1), tax_amount: safeN2(r[ci('세액(원)')]) })
+  // 세액표: 신규 양식 (A=적용일자, B=이상(원), C=미만(원), D~N=1인~11인)
+  if (wb.SheetNames.includes('세액표')) {
+    const rawRows = XLSX.utils.sheet_to_json(wb.Sheets['세액표'], { header: 1 })
+    const safeN2 = (v, def = 0) => { const n = Number(v ?? def); return isNaN(n) ? def : n }
+    let lastAf = null
+    for (let i = 1; i < rawRows.length; i++) {
+      const r = rawRows[i]
+      const af = String(r[0] ?? '').trim()
+      if (af) lastAf = af
+      if (!lastAf) continue
+      const rmin = safeN2(r[1], NaN)
+      if (isNaN(rmin)) continue
+      const rmxRaw = r[2]
+      const rmax = (rmxRaw == null || String(rmxRaw).trim() === '') ? null : safeN2(rmxRaw)
+      for (let d = 1; d <= 11; d++) {
+        tax.push({ apply_from: lastAf, range_min: rmin, range_max: rmax, dependents: d, tax_amount: safeN2(r[2 + d]) })
+      }
+    }
+  }
+
+  // 초과세율: 시트명 '초과세율' (A=적용일자, B=구간시작, C=구간끝, D=누적세액, E=보정비율, F=세율)
+  if (wb.SheetNames.includes('초과세율')) {
+    const rawRows = XLSX.utils.sheet_to_json(wb.Sheets['초과세율'], { header: 1 })
+    const safeN3 = (v, def = 0) => { const n = Number(v ?? def); return isNaN(n) ? def : n }
+    for (let i = 1; i < rawRows.length; i++) {
+      const r = rawRows[i]
+      const af = String(r[0] ?? '').trim()
+      if (!af) continue
+      const tf = safeN3(r[1], NaN)
+      if (isNaN(tf)) continue
+      const ttRaw = r[2]
+      const tt = (ttRaw == null || String(ttRaw).trim() === '') ? null : safeN3(ttRaw)
+      excessRate.push({ apply_from: af, threshold_from: tf, threshold_to: tt, accumulated: safeN3(r[3]), factor: safeN3(r[4], 0.98), rate: safeN3(r[5]) })
     }
   }
 
@@ -965,7 +1155,7 @@ function parseWorkbook(wb) {
     }
   }
 
-  return { codes, insurance, tax, holidays, leaveRates, skipped }
+  return { codes, insurance, tax, excessRate, holidays, leaveRates, skipped }
 }
 
 function BulkUploadModal({ onClose }) {
@@ -987,6 +1177,37 @@ function BulkUploadModal({ onClose }) {
     } catch (err) {
       setMsg({ type: 'error', text: 'Excel 파일 읽기 실패: ' + err.message })
     }
+  }
+
+  const downloadBulkTemplate = () => {
+    const today = new Date().toISOString().slice(0, 10)
+    const wb2 = XLSX.utils.book_new()
+
+    // 세액표 시트
+    const taxHeaders = ['적용일자', '이상(원)', '미만(원)', '1인', '2인', '3인', '4인', '5인', '6인', '7인', '8인', '9인', '10인', '11인']
+    const taxSample1 = [today, 770000, 775000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    const taxSample2 = ['', 775000, 780000, 19220, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    XLSX.utils.book_append_sheet(wb2, XLSX.utils.aoa_to_sheet([taxHeaders, taxSample1, taxSample2]), '세액표')
+
+    // 초과세율 시트
+    const erHeaders = ['적용일자', '구간시작(원) 초과', '구간끝(원) 이하', '누적세액(원)', '보정비율', '세율']
+    const erSamples = [
+      [today, 10000000, 14000000,   25000, 0.98, 0.35],
+      [today, 14000000, 28000000, 1397000, 0.98, 0.38],
+      [today, 28000000, 30000000, 6610600, 0.98, 0.40],
+      [today, 30000000, 45000000, 7394600, 0.98, 0.40],
+      [today, 45000000, 87000000, 13394600, 0.98, 0.42],
+      [today, 87000000, '',       31034600, 0.98, 0.45],
+    ]
+    XLSX.utils.book_append_sheet(wb2, XLSX.utils.aoa_to_sheet([erHeaders, ...erSamples]), '초과세율')
+
+    // 보험요율 시트
+    const insHeaders = ['연도', '국민연금(%)', '건강보험(%)', '장기요양(%)', '고용보험(%)', '적용시작', '적용종료', '비고']
+    const insSample  = [2026, 9, 7.09, 12.95, 1.8, '2026-01-01', '2026-12-31', '']
+    XLSX.utils.book_append_sheet(wb2, XLSX.utils.aoa_to_sheet([insHeaders, insSample]), '보험요율')
+
+    const ds = today.replace(/-/g, '')
+    XLSX.writeFile(wb2, `seed_export_${ds}_v1.xlsx`)
   }
 
   const handleImport = async () => {
@@ -1012,14 +1233,21 @@ function BulkUploadModal({ onClose }) {
         if (error) throw error
       }
       if (preview.tax.length) {
-        const yrs = [...new Set(preview.tax.map(r => r.year))]
-        for (const yr of yrs) await supabase.from('income_tax_table').delete().eq('year', yr)
+        const afs = [...new Set(preview.tax.map(r => r.apply_from))]
+        for (const af of afs) await supabase.from('income_tax_table').delete().eq('apply_from', af)
         const CHUNK = 500
         for (let i = 0; i < preview.tax.length; i += CHUNK) {
           setProgress(`세액표 처리 중… ${Math.round(i / preview.tax.length * 100)}%`)
           const { error } = await supabase.from('income_tax_table').insert(preview.tax.slice(i, i + CHUNK))
           if (error) throw error
         }
+      }
+      if (preview.excessRate.length) {
+        setProgress('초과세율 처리 중…')
+        const afs = [...new Set(preview.excessRate.map(r => r.apply_from))]
+        for (const af of afs) await supabase.from('income_tax_excess_rate').delete().eq('apply_from', af)
+        const { error } = await supabase.from('income_tax_excess_rate').insert(preview.excessRate)
+        if (error) throw error
       }
       if (preview.holidays.length) {
         setProgress('공휴일 처리 중…')
@@ -1045,10 +1273,11 @@ function BulkUploadModal({ onClose }) {
     setImporting(false)
   }
 
-  const taxYears  = preview ? [...new Set(preview.tax.map(r => r.year))].sort().join(', ') : ''
+  const taxAfs    = preview ? [...new Set(preview.tax.map(r => r.apply_from))].sort().join(', ') : ''
   const holYears  = preview ? [...new Set(preview.holidays.map(r => r.year))].sort().join(', ') : ''
   const insYears  = preview ? preview.insurance.map(r => r.year).join(', ') : ''
   const lrYears   = preview ? preview.leaveRates.map(r => r.year).sort().join(', ') : ''
+  const excessAfs = preview ? [...new Set(preview.excessRate.map(r => r.apply_from))].sort().join(', ') : ''
 
   return (
     <div style={s.popupOverlay} onClick={!importing ? onClose : undefined}>
@@ -1071,6 +1300,9 @@ function BulkUploadModal({ onClose }) {
               <div style={{ fontSize: 12, color: '#94A3B8' }}>seed_export_YYYYMMDD_v*.xlsx</div>
             </div>
             <input ref={fileRef} type="file" accept=".xlsx" style={{ display: 'none' }} onChange={handleFile} />
+            <div style={{ marginTop: 10, textAlign: 'right' }}>
+              <button style={{ ...s.btn('ghost'), fontSize: 12 }} onClick={downloadBulkTemplate}>📥 업로드 양식 다운로드</button>
+            </div>
             {msg && <div style={{ ...s.alert, ...(msg.type === 'error' ? s.alertError : s.alertOk), marginTop: 12 }}>{msg.text}</div>}
           </div>
         ) : (
@@ -1080,7 +1312,8 @@ function BulkUploadModal({ onClose }) {
               {[
                 ['코드', `${preview.codes.length}건 (${[...new Set(preview.codes.map(c => c.group_code))].length}개 그룹)`],
                 ['보험요율', `${preview.insurance.length}건 (${insYears}년)`],
-                ['세액표', `${preview.tax.length}건 (${taxYears}년)`],
+                ['간이세액표', `${preview.tax.length}건 (${taxAfs})`],
+                ...(preview.excessRate.length ? [['초과세율', `${preview.excessRate.length}건 (${excessAfs})`]] : []),
                 ['공휴일', `${preview.holidays.length}건 (${holYears}년)`],
                 ...(preview.leaveRates.length ? [['출산육아급여기준', `${preview.leaveRates.length}건 (${lrYears}년)`]] : []),
               ].map(([k, v]) => (
@@ -1095,7 +1328,7 @@ function BulkUploadModal({ onClose }) {
             </div>
             <div style={{ padding: '8px 12px', background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: 6, fontSize: 12, color: '#9A3412', marginBottom: 16 }}>
               ⚠️ 코드: 기존 코드명만 업데이트, 사용여부·순서·사용자추가코드 보존<br/>
-              ⚠️ 보험요율·세액표·공휴일: 해당 연도 데이터 삭제 후 대체 (되돌릴 수 없음)
+              ⚠️ 보험요율·간이세액표·초과세율·공휴일: 해당 시행일 데이터 삭제 후 대체 (되돌릴 수 없음)
             </div>
             {msg && <div style={{ ...s.alert, ...(msg.type === 'error' ? s.alertError : s.alertOk), marginBottom: 12 }}>{msg.text}</div>}
             {progress && <div style={{ fontSize: 12, color: '#2563EB', marginBottom: 8, textAlign: 'center' }}>{progress}</div>}
