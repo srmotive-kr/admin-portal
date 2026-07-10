@@ -8,7 +8,7 @@ DELETE FROM public.insurance_rates
 WHERE id NOT IN (
     SELECT MIN(id)
     FROM public.insurance_rates
-    GROUP BY year, COALESCE(apply_from, '1900-01-01'::date)
+    GROUP BY year, COALESCE(apply_from, '1900-01-01')
 );
 
 -- 2. 이후 중복 방지를 위한 UNIQUE 제약 추가 (없을 때만)

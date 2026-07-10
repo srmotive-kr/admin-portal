@@ -855,7 +855,7 @@ function HolidayTab() {
 const CODE_SHEETS = ['직책명','직위명','고용형태구분','발령구분','업무구분','급여구분','수당구분','상여금구분','휴가구분','외출조퇴구분','퇴직사유','퇴직금구분']
 
 function parseWorkbook(wb) {
-  const codes = [], insurance = [], tax = [], holidays = [], skipped = []
+  const codes = [], insurance = [], tax = [], holidays = [], leaveRates = [], skipped = []
 
   for (const sheetName of CODE_SHEETS) {
     if (!wb.SheetNames.includes(sheetName)) continue
@@ -933,9 +933,30 @@ function parseWorkbook(wb) {
     }
   }
 
-  if (wb.SheetNames.includes('출산육아급여기준')) skipped.push('출산육아급여기준 (별도 테이블 — 미지원)')
+  if (wb.SheetNames.includes('출산육아급여기준')) {
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets['출산육아급여기준'], { header: 1 })
+    const header = rows[1] || []
+    const ci = k => header.indexOf(k)
+    for (let i = 2; i < rows.length; i++) {
+      const r = rows[i]
+      if (!r[ci('year')]) continue
+      leaveRates.push({
+        year:              Number(r[ci('year')]),
+        maternity_ei_cap:  Number(r[ci('maternity_ei_cap')]  || 0),
+        paternity_days:    Number(r[ci('paternity_days')]    || 0),
+        paternity_ei_cap:  r[ci('paternity_ei_cap')] != null ? Number(r[ci('paternity_ei_cap')]) : null,
+        parental_cap_1_3:  Number(r[ci('parental_cap_1_3')] || 0),
+        parental_cap_4_6:  Number(r[ci('parental_cap_4_6')] || 0),
+        parental_cap_7p:   Number(r[ci('parental_cap_7p')]  || 0),
+        parental_rate_1_6: Number(r[ci('parental_rate_1_6')]|| 1),
+        parental_rate_7p:  Number(r[ci('parental_rate_7p')] || 0),
+        parental_floor:    Number(r[ci('parental_floor')]    || 0),
+        memo:              r[ci('memo')] || null,
+      })
+    }
+  }
 
-  return { codes, insurance, tax, holidays, skipped }
+  return { codes, insurance, tax, holidays, leaveRates, skipped }
 }
 
 function BulkUploadModal({ onClose }) {
@@ -967,25 +988,11 @@ function BulkUploadModal({ onClose }) {
         const groups = [...new Set(preview.codes.map(c => c.group_code))]
         for (const gc of groups) {
           setProgress(`코드 [${gc}] 처리 중…`)
-          // 기존 코드 조회 (사용자 설정 보존용)
-          const { data: existing } = await supabase
-            .from('seed_codes').select('id,code').eq('group_code', gc)
-          const existingMap = new Map((existing || []).map(r => [String(r.code), r.id]))
+          const { error: delErr } = await supabase.from('seed_codes').delete().eq('group_code', gc)
+          if (delErr) throw delErr
           const newCodes = preview.codes.filter(c => c.group_code === gc)
-          for (const nc of newCodes) {
-            const exId = existingMap.get(String(nc.code))
-            if (exId) {
-              // 기존 코드: name과 is_system_default만 업데이트 — use_yn/sort_order 보존
-              const { error } = await supabase.from('seed_codes')
-                .update({ name: nc.name, is_system_default: nc.is_system_default })
-                .eq('id', exId)
-              if (error) throw error
-            } else {
-              // 신규 코드: 전체 삽입
-              const { error } = await supabase.from('seed_codes').insert(nc)
-              if (error) throw error
-            }
-          }
+          const { error } = await supabase.from('seed_codes').insert(newCodes)
+          if (error) throw error
         }
       }
       if (preview.insurance.length) {
@@ -1012,6 +1019,14 @@ function BulkUploadModal({ onClose }) {
         const { error } = await supabase.from('holidays').insert(preview.holidays)
         if (error) throw error
       }
+      if (preview.leaveRates.length) {
+        setProgress('출산육아급여기준 처리 중…')
+        for (const row of preview.leaveRates) {
+          const { error } = await supabase.from('gov_leave_benefit_rates')
+            .upsert(row, { onConflict: 'year' })
+          if (error) throw error
+        }
+      }
       setProgress(''); setDone(true)
       setMsg({ type: 'success', text: '전체 업로드 완료!' })
     } catch (err) {
@@ -1021,9 +1036,10 @@ function BulkUploadModal({ onClose }) {
     setImporting(false)
   }
 
-  const taxYears = preview ? [...new Set(preview.tax.map(r => r.year))].sort().join(', ') : ''
-  const holYears = preview ? [...new Set(preview.holidays.map(r => r.year))].sort().join(', ') : ''
-  const insYears = preview ? preview.insurance.map(r => r.year).join(', ') : ''
+  const taxYears  = preview ? [...new Set(preview.tax.map(r => r.year))].sort().join(', ') : ''
+  const holYears  = preview ? [...new Set(preview.holidays.map(r => r.year))].sort().join(', ') : ''
+  const insYears  = preview ? preview.insurance.map(r => r.year).join(', ') : ''
+  const lrYears   = preview ? preview.leaveRates.map(r => r.year).sort().join(', ') : ''
 
   return (
     <div style={s.popupOverlay} onClick={!importing ? onClose : undefined}>
@@ -1057,6 +1073,7 @@ function BulkUploadModal({ onClose }) {
                 ['보험요율', `${preview.insurance.length}건 (${insYears}년)`],
                 ['세액표', `${preview.tax.length}건 (${taxYears}년)`],
                 ['공휴일', `${preview.holidays.length}건 (${holYears}년)`],
+                ...(preview.leaveRates.length ? [['출산육아급여기준', `${preview.leaveRates.length}건 (${lrYears}년)`]] : []),
               ].map(([k, v]) => (
                 <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid #F1F5F9' }}>
                   <span style={{ color: '#475569' }}>{k}</span>
@@ -1077,7 +1094,7 @@ function BulkUploadModal({ onClose }) {
               {!done && <button style={s.btn('ghost')} onClick={() => setPreview(null)} disabled={importing}>다시 선택</button>}
               {!done
                 ? <button style={s.btn('primary')} onClick={handleImport} disabled={importing}>
-                    {importing ? '업로드 중…' : '업로드 확인'}
+                    {importing ? '업로드 중…' : '업로드'}
                   </button>
                 : <button style={s.btn('primary')} onClick={onClose}>닫기</button>
               }
