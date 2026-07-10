@@ -476,11 +476,23 @@ function TaxTab() {
 
   const load = async () => {
     setLoading(true); setMsg(null)
-    const { data, error } = await supabase.from('income_tax_table').select('year')
+    // 전체 연도 목록 (최대 10만행으로 limit 높여서 year 필드만 조회)
+    const { data: rawYears, error } = await supabase
+      .from('income_tax_table').select('year').limit(200000)
     if (error) { setMsg({ type: 'error', text: error.message }); setLoading(false); return }
     const counts = {}
-    for (const r of data || []) counts[r.year] = (counts[r.year] || 0) + 1
-    setYears(Object.entries(counts).sort((a, b) => b[0] - a[0]).map(([y, c]) => ({ year: Number(y), count: c })))
+    for (const r of rawYears || []) counts[r.year] = (counts[r.year] || 0) + 1
+    // limit을 넘는 연도는 정확한 카운트를 별도 요청
+    const distinctYears = Object.keys(counts).map(Number).sort((a, b) => b - a)
+    const yearList = []
+    for (const yr of distinctYears) {
+      const { count: exact } = await supabase
+        .from('income_tax_table')
+        .select('*', { count: 'exact', head: true })
+        .eq('year', yr)
+      yearList.push({ year: yr, count: exact ?? counts[yr] })
+    }
+    setYears(yearList)
     setLoading(false)
   }
   useEffect(() => { load() }, [])
@@ -494,20 +506,32 @@ function TaxTab() {
 
   const handleRowClick = async (year) => {
     setPopup({ year, rows: null })
-    const { data, error } = await supabase
-      .from('income_tax_table')
-      .select('range_min,range_max,dependents,tax_amount')
-      .eq('year', year)
-      .order('range_min', { ascending: true })
-      .order('dependents', { ascending: true })
-    if (error) { setMsg({ type: 'error', text: error.message }); setPopup(null); return }
-    const map = new Map()
-    for (const r of data || []) {
-      const key = `${r.range_min}-${r.range_max}`
-      if (!map.has(key)) map.set(key, { range_min: r.range_min, range_max: r.range_max })
-      map.get(key)[`dep_${r.dependents}`] = r.tax_amount
+    try {
+      const BATCH = 1000
+      let allData = [], from = 0
+      while (true) {
+        const { data, error } = await supabase
+          .from('income_tax_table')
+          .select('range_min,range_max,dependents,tax_amount')
+          .eq('year', year)
+          .order('range_min', { ascending: true })
+          .order('dependents', { ascending: true })
+          .range(from, from + BATCH - 1)
+        if (error) throw error
+        allData = [...allData, ...(data || [])]
+        if (!data || data.length < BATCH) break
+        from += BATCH
+      }
+      const map = new Map()
+      for (const r of allData) {
+        const key = `${r.range_min}-${r.range_max}`
+        if (!map.has(key)) map.set(key, { range_min: r.range_min, range_max: r.range_max })
+        map.get(key)[`dep_${r.dependents}`] = r.tax_amount
+      }
+      setPopup({ year, rows: [...map.values()] })
+    } catch (err) {
+      setMsg({ type: 'error', text: err.message }); setPopup(null)
     }
-    setPopup({ year, rows: [...map.values()] })
   }
 
   const downloadTemplate = () => {
