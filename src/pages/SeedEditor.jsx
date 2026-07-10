@@ -179,11 +179,13 @@ function CodeTab({ groupCode, onGroupChange }) {
             총 <strong style={{ color: '#2563EB' }}>{items.length}</strong>건
             {dirty && <span style={{ color: '#DC2626', marginLeft: 8 }}>● 미저장</span>}
           </span>
-          <button style={s.btn('ghost')} onClick={load} disabled={saving}>↺ 새로고침</button>
-          <button style={s.btn('success')} onClick={handleAdd} disabled={saving}>+ 행 추가</button>
-          <button style={s.btn('primary')} onClick={handleSave} disabled={saving || !dirty}>
-            {saving ? '저장 중…' : '💾 저장'}
-          </button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button style={s.btn('ghost')} onClick={load} disabled={saving}>↺ 새로고침</button>
+            <button style={s.btn('success')} onClick={handleAdd} disabled={saving}>+ 행 추가</button>
+            <button style={s.btn('primary')} onClick={handleSave} disabled={saving || !dirty}>
+              {saving ? '저장 중…' : '💾 저장'}
+            </button>
+          </div>
         </div>
 
         {msg && (
@@ -211,7 +213,6 @@ function CodeTab({ groupCode, onGroupChange }) {
                   {grp?.hasOrdinary && (
                     <th style={{ ...s.th, width: 120, textAlign: 'center' }}>통상임금</th>
                   )}
-                  <th style={{ ...s.th, width: 56, textAlign: 'center' }}>사용</th>
                   <th style={{ ...s.th, width: 64, textAlign: 'center' }}>이동</th>
                   <th style={{ ...s.th, width: 56, textAlign: 'center' }}>삭제</th>
                 </tr>
@@ -240,13 +241,10 @@ function CodeTab({ groupCode, onGroupChange }) {
                         )}
                       </td>
                       <td style={s.td}>
-                        {isSys ? (
-                          <span style={{ color: '#1E293B' }}>{it.name}</span>
-                        ) : (
-                          <input style={s.input} value={it.name}
-                            onChange={e => change(idx, 'name', e.target.value)}
-                            placeholder="코드명 입력" />
-                        )}
+                        <input style={{ ...s.input, background: isSys ? '#F0F4FF' : '#F8FAFC' }}
+                          value={it.name}
+                          onChange={e => change(idx, 'name', e.target.value)}
+                          placeholder="코드명 입력" />
                       </td>
                       {grp?.hasTaxable && (() => {
                         const isPaid = it.taxable_yn === 'Y'
@@ -295,12 +293,6 @@ function CodeTab({ groupCode, onGroupChange }) {
                           </td>
                         )
                       })()}
-                      <td style={{ ...s.td, textAlign: 'center' }}>
-                        <button style={{ ...s.toggleBtn, background: it.use_yn === 'Y' ? '#16A34A' : '#94A3B8' }}
-                          onClick={() => change(idx, 'use_yn', it.use_yn === 'Y' ? 'N' : 'Y')}>
-                          {it.use_yn === 'Y' ? '사용' : '미사용'}
-                        </button>
-                      </td>
                       <td style={{ ...s.td, textAlign: 'center' }}>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'center' }}>
                           <button style={s.arrowBtn} onClick={() => handleMove(idx, -1)} disabled={idx === 0}>▲</button>
@@ -394,11 +386,13 @@ function InsuranceTab() {
           총 <strong style={{ color: '#2563EB' }}>{items.length}</strong>건
           {dirty && <span style={{ color: '#DC2626', marginLeft: 8 }}>● 미저장</span>}
         </span>
-        <button style={s.btn('ghost')} onClick={load} disabled={saving}>↺ 새로고침</button>
-        <button style={s.btn('success')} onClick={handleAdd} disabled={saving}>+ 연도 추가</button>
-        <button style={s.btn('primary')} onClick={handleSave} disabled={saving || !dirty}>
-          {saving ? '저장 중…' : '💾 저장'}
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button style={s.btn('ghost')} onClick={load} disabled={saving}>↺ 새로고침</button>
+          <button style={s.btn('success')} onClick={handleAdd} disabled={saving}>+ 연도 추가</button>
+          <button style={s.btn('primary')} onClick={handleSave} disabled={saving || !dirty}>
+            {saving ? '저장 중…' : '💾 저장'}
+          </button>
+        </div>
       </div>
       {msg && <div style={{ ...s.alert, ...(msg.type === 'error' ? s.alertError : s.alertOk), display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}><span>{msg.text}</span><button onClick={() => setMsg(null)} style={s.alertClose}>×</button></div>}
       {loading ? <div style={s.empty}>로딩 중…</div> : (
@@ -407,10 +401,10 @@ function InsuranceTab() {
             <thead>
               <tr>
                 <th style={{ ...s.th, width: 80 }}>연도</th>
-                <th style={{ ...s.th, width: 110, textAlign: 'center' }}>국민연금</th>
-                <th style={{ ...s.th, width: 110, textAlign: 'center' }}>건강보험</th>
-                <th style={{ ...s.th, width: 110, textAlign: 'center' }}>장기요양</th>
-                <th style={{ ...s.th, width: 110, textAlign: 'center' }}>고용보험</th>
+                <th style={{ ...s.th, width: 150, textAlign: 'center' }}>국민연금</th>
+                <th style={{ ...s.th, width: 150, textAlign: 'center' }}>건강보험</th>
+                <th style={{ ...s.th, width: 150, textAlign: 'center' }}>장기요양</th>
+                <th style={{ ...s.th, width: 150, textAlign: 'center' }}>고용보험</th>
                 <th style={{ ...s.th, width: 100 }}>적용시작</th>
                 <th style={{ ...s.th, width: 100 }}>적용종료</th>
                 <th style={s.th}>비고</th>
@@ -1169,7 +1163,8 @@ function LeaveRateTab() {
     setSaving(false); load()
   }
 
-  const fmtW = v => v != null ? Number(v).toLocaleString() : ''
+  const fmtAmt = v => (v != null && v !== '') ? Number(v).toLocaleString('ko-KR') : ''
+  const parseAmt = v => { const n = Number(String(v).replace(/,/g, '')); return isNaN(n) ? null : n }
 
   return (
     <div style={s.card}>
@@ -1178,11 +1173,13 @@ function LeaveRateTab() {
           총 <strong style={{ color: '#2563EB' }}>{items.length}</strong>건
           {dirty && <span style={{ color: '#DC2626', marginLeft: 8 }}>● 미저장</span>}
         </span>
-        <button style={s.btn('ghost')} onClick={load} disabled={saving}>↺ 새로고침</button>
-        <button style={s.btn('success')} onClick={handleAdd} disabled={saving}>+ 연도 추가</button>
-        <button style={s.btn('primary')} onClick={handleSave} disabled={saving || !dirty}>
-          {saving ? '저장 중…' : '💾 저장'}
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button style={s.btn('ghost')} onClick={load} disabled={saving}>↺ 새로고침</button>
+          <button style={s.btn('success')} onClick={handleAdd} disabled={saving}>+ 연도 추가</button>
+          <button style={s.btn('primary')} onClick={handleSave} disabled={saving || !dirty}>
+            {saving ? '저장 중…' : '💾 저장'}
+          </button>
+        </div>
       </div>
       {msg && <div style={{ ...s.alert, ...(msg.type === 'error' ? s.alertError : s.alertOk), display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}><span>{msg.text}</span><button onClick={() => setMsg(null)} style={s.alertClose}>×</button></div>}
       <div style={{ fontSize: 12, color: '#64748B', marginBottom: 10 }}>
@@ -1193,7 +1190,7 @@ function LeaveRateTab() {
           <table style={s.table}>
             <thead>
               <tr>
-                <th style={{ ...s.th, width: 70 }}>연도</th>
+                <th style={{ ...s.th, width: 90 }}>연도</th>
                 <th style={{ ...s.th, width: 110, textAlign: 'right' }}>출산전후휴가<br/>급여상한(원)</th>
                 <th style={{ ...s.th, width: 90, textAlign: 'center' }}>배우자<br/>휴가일수</th>
                 <th style={{ ...s.th, width: 110, textAlign: 'right' }}>배우자휴가<br/>급여상한(원)</th>
@@ -1211,14 +1208,14 @@ function LeaveRateTab() {
               {items.map((it, idx) => (
                 <tr key={idx} style={{ background: it._dirty ? 'rgba(37,99,235,.03)' : 'transparent', borderBottom: '1px solid #F1F5F9' }}>
                   <td style={s.td}>
-                    <input style={{ ...s.input, width: 58, textAlign: 'center' }}
+                    <input style={{ ...s.input, width: 78, textAlign: 'center' }}
                       type="number" value={it.year}
                       onChange={e => change(idx, 'year', Number(e.target.value))} />
                   </td>
                   <td style={s.td}>
-                    <input style={{ ...s.input, width: 100, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
-                      type="number" value={it.maternity_ei_cap ?? ''}
-                      onChange={e => change(idx, 'maternity_ei_cap', e.target.value === '' ? null : Number(e.target.value))} />
+                    <input style={{ ...s.input, width: 110, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
+                      type="text" value={fmtAmt(it.maternity_ei_cap)}
+                      onChange={e => change(idx, 'maternity_ei_cap', parseAmt(e.target.value))} />
                   </td>
                   <td style={{ ...s.td, textAlign: 'center' }}>
                     <input style={{ ...s.input, width: 60, textAlign: 'center' }}
@@ -1226,32 +1223,32 @@ function LeaveRateTab() {
                       onChange={e => change(idx, 'paternity_days', e.target.value === '' ? null : Number(e.target.value))} />
                   </td>
                   <td style={s.td}>
-                    <input style={{ ...s.input, width: 100, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
-                      type="number" value={it.paternity_ei_cap ?? ''}
+                    <input style={{ ...s.input, width: 110, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
+                      type="text" value={fmtAmt(it.paternity_ei_cap)}
                       placeholder="미정"
-                      onChange={e => change(idx, 'paternity_ei_cap', e.target.value === '' ? null : Number(e.target.value))} />
+                      onChange={e => change(idx, 'paternity_ei_cap', e.target.value === '' ? null : parseAmt(e.target.value))} />
                   </td>
                   {['parental_cap_1_3', 'parental_cap_4_6', 'parental_cap_7p'].map(key => (
                     <td key={key} style={s.td}>
-                      <input style={{ ...s.input, width: 100, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
-                        type="number" value={it[key] ?? ''}
-                        onChange={e => change(idx, key, e.target.value === '' ? null : Number(e.target.value))} />
+                      <input style={{ ...s.input, width: 110, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
+                        type="text" value={fmtAmt(it[key])}
+                        onChange={e => change(idx, key, parseAmt(e.target.value))} />
                     </td>
                   ))}
                   {['parental_rate_1_6', 'parental_rate_7p'].map(key => (
                     <td key={key} style={{ ...s.td, textAlign: 'center' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 2, justifyContent: 'center' }}>
                         <input style={{ ...s.input, width: 56, textAlign: 'right' }}
-                          type="number" step="0.01" value={it[key] != null ? (Number(it[key]) * 100).toFixed(0) : ''}
+                          type="number" step="1" value={it[key] != null ? (Number(it[key]) * 100).toFixed(0) : ''}
                           onChange={e => change(idx, key, e.target.value === '' ? null : Number(e.target.value) / 100)} />
                         <span style={{ fontSize: 11, color: '#94A3B8' }}>%</span>
                       </div>
                     </td>
                   ))}
                   <td style={s.td}>
-                    <input style={{ ...s.input, width: 90, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
-                      type="number" value={it.parental_floor ?? ''}
-                      onChange={e => change(idx, 'parental_floor', e.target.value === '' ? null : Number(e.target.value))} />
+                    <input style={{ ...s.input, width: 100, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
+                      type="text" value={fmtAmt(it.parental_floor)}
+                      onChange={e => change(idx, 'parental_floor', parseAmt(e.target.value))} />
                   </td>
                   <td style={s.td}>
                     <input style={s.input} value={it.memo || ''}
