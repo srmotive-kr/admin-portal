@@ -405,8 +405,8 @@ function InsuranceTab() {
                 <th style={{ ...s.th, width: 150, textAlign: 'center' }}>건강보험</th>
                 <th style={{ ...s.th, width: 150, textAlign: 'center' }}>장기요양</th>
                 <th style={{ ...s.th, width: 150, textAlign: 'center' }}>고용보험</th>
-                <th style={{ ...s.th, width: 100 }}>적용시작</th>
-                <th style={{ ...s.th, width: 100 }}>적용종료</th>
+                <th style={{ ...s.th, width: 140 }}>적용시작</th>
+                <th style={{ ...s.th, width: 140 }}>적용종료</th>
                 <th style={s.th}>비고</th>
                 <th style={{ ...s.th, width: 64, textAlign: 'center' }}>삭제</th>
               </tr>
@@ -430,12 +430,12 @@ function InsuranceTab() {
                     </td>
                   ))}
                   <td style={s.td}>
-                    <input style={{ ...s.input, width: 90 }} type="month"
+                    <input style={{ ...s.input, width: 130 }} type="month"
                       value={it.apply_from ? it.apply_from.slice(0, 7) : ''}
                       onChange={e => change(idx, 'apply_from', e.target.value || null)} />
                   </td>
                   <td style={s.td}>
-                    <input style={{ ...s.input, width: 90 }} type="month"
+                    <input style={{ ...s.input, width: 130 }} type="month"
                       value={it.apply_to ? it.apply_to.slice(0, 7) : ''}
                       onChange={e => change(idx, 'apply_to', e.target.value || null)} />
                   </td>
