@@ -430,13 +430,13 @@ function InsuranceTab() {
                     </td>
                   ))}
                   <td style={s.td}>
-                    <input style={{ ...s.input, width: 90 }} type="date"
-                      value={it.apply_from || ''}
+                    <input style={{ ...s.input, width: 90 }} type="month"
+                      value={it.apply_from ? it.apply_from.slice(0, 7) : ''}
                       onChange={e => change(idx, 'apply_from', e.target.value || null)} />
                   </td>
                   <td style={s.td}>
-                    <input style={{ ...s.input, width: 90 }} type="date"
-                      value={it.apply_to || ''}
+                    <input style={{ ...s.input, width: 90 }} type="month"
+                      value={it.apply_to ? it.apply_to.slice(0, 7) : ''}
                       onChange={e => change(idx, 'apply_to', e.target.value || null)} />
                   </td>
                   <td style={s.td}>
