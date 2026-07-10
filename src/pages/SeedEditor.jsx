@@ -742,10 +742,12 @@ function HolidayTab() {
 
   const downloadTemplate = () => {
     const rows = [
+      '# holiday_type: NATIONAL=법정공휴일 / SUBSTITUTE=대체공휴일',
       'holiday_date,holiday_name,holiday_type',
       `${year}-01-01,신정,NATIONAL`,
       `${year}-03-01,삼일절,NATIONAL`,
       `${year}-05-05,어린이날,NATIONAL`,
+      `${year}-05-06,어린이날 대체공휴일,SUBSTITUTE`,
     ].join('\n')
     const blob = new Blob(['﻿' + rows], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
@@ -761,7 +763,9 @@ function HolidayTab() {
     const lines = text.replace(/\r/g, '').trim().split('\n')
     const rows = []
     for (let i = 1; i < lines.length; i++) {
-      const [date, name, type] = lines[i].split(',').map(v => v.trim())
+      const line = lines[i].trim()
+      if (!line || line.startsWith('#')) continue
+      const [date, name, type] = line.split(',').map(v => v.trim())
       if (!date || !name) continue
       rows.push({ year, holiday_date: date, holiday_name: name, holiday_type: type || 'NATIONAL' })
     }
@@ -963,9 +967,25 @@ function BulkUploadModal({ onClose }) {
         const groups = [...new Set(preview.codes.map(c => c.group_code))]
         for (const gc of groups) {
           setProgress(`코드 [${gc}] 처리 중…`)
-          await supabase.from('seed_codes').delete().eq('group_code', gc)
-          const { error } = await supabase.from('seed_codes').insert(preview.codes.filter(c => c.group_code === gc))
-          if (error) throw error
+          // 기존 코드 조회 (사용자 설정 보존용)
+          const { data: existing } = await supabase
+            .from('seed_codes').select('id,code').eq('group_code', gc)
+          const existingMap = new Map((existing || []).map(r => [String(r.code), r.id]))
+          const newCodes = preview.codes.filter(c => c.group_code === gc)
+          for (const nc of newCodes) {
+            const exId = existingMap.get(String(nc.code))
+            if (exId) {
+              // 기존 코드: name과 is_system_default만 업데이트 — use_yn/sort_order 보존
+              const { error } = await supabase.from('seed_codes')
+                .update({ name: nc.name, is_system_default: nc.is_system_default })
+                .eq('id', exId)
+              if (error) throw error
+            } else {
+              // 신규 코드: 전체 삽입
+              const { error } = await supabase.from('seed_codes').insert(nc)
+              if (error) throw error
+            }
+          }
         }
       }
       if (preview.insurance.length) {
@@ -1048,7 +1068,8 @@ function BulkUploadModal({ onClose }) {
               )}
             </div>
             <div style={{ padding: '8px 12px', background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: 6, fontSize: 12, color: '#9A3412', marginBottom: 16 }}>
-              ⚠️ 기존 데이터를 삭제 후 대체합니다. 되돌릴 수 없습니다.
+              ⚠️ 코드: 기존 코드명만 업데이트, 사용여부·순서·사용자추가코드 보존<br/>
+              ⚠️ 보험요율·세액표·공휴일: 해당 연도 데이터 삭제 후 대체 (되돌릴 수 없음)
             </div>
             {msg && <div style={{ ...s.alert, ...(msg.type === 'error' ? s.alertError : s.alertOk), marginBottom: 12 }}>{msg.text}</div>}
             {progress && <div style={{ fontSize: 12, color: '#2563EB', marginBottom: 8, textAlign: 'center' }}>{progress}</div>}
