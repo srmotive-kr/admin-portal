@@ -548,18 +548,25 @@ function TaxTab() {
     setUploading(true); setMsg(null)
     const text = await file.text()
     const lines = text.replace(/\r/g, '').trim().split('\n')
-    const parseAmt = v => {
-      if (!v || v.trim() === '' || v.trim() === '-') return 0
-      const n = Number(String(v).replace(/,/g, '').trim())
-      return isNaN(n) ? 0 : n
+    const parseCSVLine = line => {
+      const res = []; let cur = ''; let inQ = false
+      for (let i = 0; i < line.length; i++) {
+        if (line[i] === '"') { inQ = !inQ }
+        else if (line[i] === ',' && !inQ) { res.push(cur); cur = '' }
+        else { cur += line[i] }
+      }
+      res.push(cur); return res
     }
+    const parseNum = v => { const n = Number(String(v ?? '').replace(/,/g, '').trim()); return isNaN(n) ? NaN : n }
+    const parseAmt = v => { const n = parseNum(v); return (isNaN(n) || String(v).trim() === '-') ? 0 : n }
     const rows = []
     for (let i = 1; i < lines.length; i++) {
-      const vals = lines[i].split(',')
+      const vals = parseCSVLine(lines[i])
       if (vals.length < 3) continue
-      const range_min = Number(vals[0])
-      const range_max = vals[1]?.trim() === '' ? null : (Number(vals[1]) || null)
+      const range_min = parseNum(vals[0])
       if (isNaN(range_min)) continue
+      const rmx = parseNum(vals[1])
+      const range_max = isNaN(rmx) || rmx === 0 ? null : rmx
       for (let d = 1; d <= 11; d++) {
         rows.push({ year: yr, range_min, range_max, dependents: d, tax_amount: parseAmt(vals[d + 1]) })
       }
