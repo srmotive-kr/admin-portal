@@ -423,7 +423,7 @@ function InsuranceTab() {
                     <td key={key} style={{ ...s.td, textAlign: 'center' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 4, justifyContent: 'center' }}>
                         <input style={{ ...s.input, width: 70, textAlign: 'right' }}
-                          type="number" step="0.0001" value={Number(it[key] || 0) * 100}
+                          type="number" step="0.0001" value={parseFloat((Number(it[key] || 0) * 100).toFixed(4))}
                           onChange={e => change(idx, key, Number(e.target.value) / 100)} />
                         <span style={{ fontSize: 11, color: '#94A3B8' }}>%</span>
                       </div>
