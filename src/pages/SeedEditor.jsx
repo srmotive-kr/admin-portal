@@ -532,21 +532,9 @@ function SimpleTaxSection() {
 
   const load = async () => {
     setLoading(true); setMsg(null)
-    const { data: afRows, error } = await supabase
-      .from('income_tax_table').select('apply_from').limit(200000)
+    const { data: versions, error } = await supabase.rpc('get_income_tax_versions')
     if (error) { setMsg({ type: 'error', text: error.message }); setLoading(false); return }
-    const counts = {}
-    for (const r of afRows || []) counts[r.apply_from] = (counts[r.apply_from] || 0) + 1
-    const distinctAfs = Object.keys(counts).sort((a, b) => b.localeCompare(a))
-    const list = []
-    for (const af of distinctAfs) {
-      const { count: exact } = await supabase
-        .from('income_tax_table')
-        .select('*', { count: 'exact', head: true })
-        .eq('apply_from', af)
-      list.push({ applyFrom: af, count: exact ?? counts[af] })
-    }
-    setAfList(list)
+    setAfList((versions || []).map(r => ({ applyFrom: r.apply_from, count: Number(r.cnt) })))
     setLoading(false)
   }
   useEffect(() => { load() }, [])
