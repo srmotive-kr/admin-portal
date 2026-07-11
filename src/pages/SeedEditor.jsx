@@ -2,6 +2,21 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabaseClient'
 
+// Excel 날짜(Date 객체 또는 시리얼 숫자) → 'YYYY-MM-DD' 문자열 변환
+function xlDateToStr(v) {
+  if (v instanceof Date) {
+    const y = v.getFullYear()
+    const m = String(v.getMonth() + 1).padStart(2, '0')
+    const d = String(v.getDate()).padStart(2, '0')
+    return `${y}-${m}-${d}`
+  }
+  if (typeof v === 'number') {
+    const dt = new Date(Math.round((v - 25569) * 86400 * 1000))
+    return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth()+1).padStart(2,'0')}-${String(dt.getUTCDate()).padStart(2,'0')}`
+  }
+  return String(v ?? '').trim()
+}
+
 // ─── 코드 그룹 정의 ───────────────────────────────────────────────────────
 const CODE_GROUPS = [
   { code: 'RANK',          label: '직책명',         hasTaxable: false, hasOrdinary: false },
@@ -37,6 +52,15 @@ export default function SeedEditor() {
   const [mainTab, setMainTab]       = useState('코드')
   const [groupCode, setGroupCode]   = useState('RANK')
   const [showBulk, setShowBulk]     = useState(false)
+  const dirtyRef = useRef(false)
+
+  const handleTabChange = (t) => {
+    if (dirtyRef.current) {
+      if (!window.confirm('저장하지 않은 변경사항이 있습니다. 이동하시겠습니까?')) return
+    }
+    dirtyRef.current = false
+    setMainTab(t)
+  }
 
   return (
     <div>
@@ -52,23 +76,23 @@ export default function SeedEditor() {
       <div style={s.mainTabs}>
         {MAIN_TABS.map(t => (
           <button key={t} style={{ ...s.mainTab, ...(mainTab === t ? s.mainTabActive : {}) }}
-            onClick={() => setMainTab(t)}>{t}</button>
+            onClick={() => handleTabChange(t)}>{t}</button>
         ))}
       </div>
 
       {mainTab === '코드' && (
-        <CodeTab groupCode={groupCode} onGroupChange={setGroupCode} />
+        <CodeTab groupCode={groupCode} onGroupChange={setGroupCode} onDirtyChange={v => { dirtyRef.current = v }} />
       )}
-      {mainTab === '보험요율'      && <InsuranceTab />}
-      {mainTab === '근로소득세액표' && <TaxTab />}
-      {mainTab === '공휴일'        && <HolidayTab />}
-      {mainTab === '출산육아급여' && <LeaveRateTab />}
+      {mainTab === '보험요율'      && <InsuranceTab onDirtyChange={v => { dirtyRef.current = v }} />}
+      {mainTab === '근로소득세액표' && <TaxTab onDirtyChange={v => { dirtyRef.current = v }} />}
+      {mainTab === '공휴일'        && <HolidayTab onDirtyChange={v => { dirtyRef.current = v }} />}
+      {mainTab === '출산육아급여' && <LeaveRateTab onDirtyChange={v => { dirtyRef.current = v }} />}
     </div>
   )
 }
 
 // ─── 코드 탭 ────────────────────────────────────────────────────────────────
-function CodeTab({ groupCode, onGroupChange }) {
+function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
   const grp          = CODE_GROUPS.find(g => g.code === groupCode)
   const [items, setItems]     = useState([])
   const [dirty, setDirty]     = useState(false)
@@ -94,6 +118,7 @@ function CodeTab({ groupCode, onGroupChange }) {
   }, [groupCode])
 
   useEffect(() => { load() }, [load])
+  useEffect(() => { onDirtyChange?.(dirty) }, [dirty])
 
   const change = (idx, key, val) => {
     setItems(prev => prev.map((it, i) => i === idx ? { ...it, [key]: val, _dirty: true } : it))
@@ -166,7 +191,10 @@ function CodeTab({ groupCode, onGroupChange }) {
         {CODE_GROUPS.map(g => (
           <button key={g.code}
             style={{ ...s.groupBtn, ...(groupCode === g.code ? s.groupBtnActive : {}) }}
-            onClick={() => onGroupChange(g.code)}>
+            onClick={() => {
+              if (dirty && !window.confirm('저장하지 않은 변경사항이 있습니다. 이동하시겠습니까?')) return
+              onGroupChange(g.code)
+            }}>
             {g.label}
           </button>
         ))}
@@ -319,7 +347,7 @@ function CodeTab({ groupCode, onGroupChange }) {
 }
 
 // ─── 보험요율 탭 ──────────────────────────────────────────────────────────────
-function InsuranceTab() {
+function InsuranceTab({ onDirtyChange }) {
   const [items, setItems]     = useState([])
   const [dirty, setDirty]     = useState(false)
   const [loading, setLoading] = useState(true)
@@ -333,6 +361,7 @@ function InsuranceTab() {
     setItems(data || []); setDirty(false); setLoading(false)
   }
   useEffect(() => { load() }, [])
+  useEffect(() => { onDirtyChange?.(dirty) }, [dirty])
 
   const change = (idx, key, val) => {
     setItems(prev => prev.map((it, i) => i === idx ? { ...it, [key]: val, _dirty: true } : it))
@@ -461,8 +490,18 @@ function InsuranceTab() {
 }
 
 // ─── 근로소득세액표 탭 (서브탭: 간이세액표 / 초과세율표) ──────────────────────
-function TaxTab() {
+function TaxTab({ onDirtyChange }) {
   const [taxSubTab, setTaxSubTab] = useState('간이세액표')
+  const taxDirtyRef = useRef(false)
+
+  const handleSubTabChange = (t) => {
+    if (taxDirtyRef.current) {
+      if (!window.confirm('저장하지 않은 변경사항이 있습니다. 이동하시겠습니까?')) return
+    }
+    taxDirtyRef.current = false
+    setTaxSubTab(t)
+  }
+
   return (
     <div>
       <div style={{ display: 'flex', gap: 4, marginBottom: 16, borderBottom: '1px solid #E2E8F0' }}>
@@ -473,11 +512,11 @@ function TaxTab() {
               color: taxSubTab === t ? '#2563EB' : '#64748B',
               borderBottom: taxSubTab === t ? '2px solid #2563EB' : '2px solid transparent',
               marginBottom: -1, transition: 'color .15s' }}
-            onClick={() => setTaxSubTab(t)}>{t}</button>
+            onClick={() => handleSubTabChange(t)}>{t}</button>
         ))}
       </div>
       {taxSubTab === '간이세액표' && <SimpleTaxSection />}
-      {taxSubTab === '초과세율표' && <ExcessRateSection />}
+      {taxSubTab === '초과세율표' && <ExcessRateSection onDirtyChange={v => { taxDirtyRef.current = v; onDirtyChange?.(v) }} />}
     </div>
   )
 }
@@ -567,7 +606,7 @@ function SimpleTaxSection() {
     setUploading(true); setMsg(null)
     try {
       const buf = await file.arrayBuffer()
-      const wb2 = XLSX.read(buf, { type: 'array' })
+      const wb2 = XLSX.read(buf, { type: 'array', cellDates: true })
       const ws = wb2.Sheets['세액표']
       if (!ws) throw new Error("'세액표' 시트를 찾을 수 없습니다.")
       const rawRows = XLSX.utils.sheet_to_json(ws, { header: 1 })
@@ -578,7 +617,7 @@ function SimpleTaxSection() {
       let lastAf = null
       for (let i = 1; i < rawRows.length; i++) {
         const r = rawRows[i]
-        const af = String(r[0] ?? '').trim()
+        const af = xlDateToStr(r[0])
         if (af) lastAf = af
         if (!lastAf) continue
         const rmin = safeN(r[1], NaN)
@@ -705,7 +744,7 @@ function SimpleTaxSection() {
 }
 
 // ─── 초과세율표 섹션 ─────────────────────────────────────────────────────────
-function ExcessRateSection() {
+function ExcessRateSection({ onDirtyChange }) {
   const [rows, setRows]       = useState([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving]   = useState(false)
@@ -722,6 +761,7 @@ function ExcessRateSection() {
     setRows(data || []); setDirty(false); setLoading(false)
   }
   useEffect(() => { load() }, [])
+  useEffect(() => { onDirtyChange?.(dirty) }, [dirty])
 
   const change = (idx, key, val) => {
     setRows(prev => prev.map((r, i) => i === idx ? { ...r, [key]: val, _dirty: true } : r))
@@ -841,7 +881,7 @@ function ExcessRateSection() {
 }
 
 // ─── 공휴일 탭 ──────────────────────────────────────────────────────────────
-function HolidayTab() {
+function HolidayTab({ onDirtyChange }) {
   const [year, setYear]         = useState(new Date().getFullYear())
   const [items, setItems]       = useState([])
   const [dirty, setDirty]       = useState(false)
@@ -872,6 +912,7 @@ function HolidayTab() {
 
   useEffect(() => { loadYears() }, [])
   useEffect(() => { if (year) load() }, [load])
+  useEffect(() => { onDirtyChange?.(dirty) }, [dirty])
 
   const change = (idx, key, val) => {
     setItems(prev => prev.map((it, i) => i === idx ? { ...it, [key]: val, _dirty: true } : it))
@@ -1089,7 +1130,7 @@ function parseWorkbook(wb) {
     let lastAf = null
     for (let i = 1; i < rawRows.length; i++) {
       const r = rawRows[i]
-      const af = String(r[0] ?? '').trim()
+      const af = xlDateToStr(r[0])
       if (af) lastAf = af
       if (!lastAf) continue
       const rmin = safeN2(r[1], NaN)
@@ -1108,7 +1149,7 @@ function parseWorkbook(wb) {
     const safeN3 = (v, def = 0) => { const n = Number(v ?? def); return isNaN(n) ? def : n }
     for (let i = 1; i < rawRows.length; i++) {
       const r = rawRows[i]
-      const af = String(r[0] ?? '').trim()
+      const af = xlDateToStr(r[0])
       if (!af) continue
       const tf = safeN3(r[1], NaN)
       if (isNaN(tf)) continue
@@ -1171,7 +1212,7 @@ function BulkUploadModal({ onClose }) {
     if (!f) return
     try {
       const buf = await f.arrayBuffer()
-      const wb = XLSX.read(buf, { type: 'array' })
+      const wb = XLSX.read(buf, { type: 'array', cellDates: true })
       setPreview(parseWorkbook(wb))
       setMsg(null)
     } catch (err) {
@@ -1349,7 +1390,7 @@ function BulkUploadModal({ onClose }) {
 }
 
 // ─── 출산육아급여기준 탭 ─────────────────────────────────────────────────────
-function LeaveRateTab() {
+function LeaveRateTab({ onDirtyChange }) {
   const [items,   setItems]   = useState([])
   const [loading, setLoading] = useState(true)
   const [saving,  setSaving]  = useState(false)
@@ -1364,6 +1405,7 @@ function LeaveRateTab() {
     setItems(data || []); setDirty(false); setLoading(false)
   }
   useEffect(() => { load() }, [])
+  useEffect(() => { onDirtyChange?.(dirty) }, [dirty])
 
   const change = (idx, key, val) => {
     setItems(prev => prev.map((it, i) => i === idx ? { ...it, [key]: val, _dirty: true } : it))
