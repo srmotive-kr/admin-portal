@@ -606,7 +606,7 @@ function SimpleTaxSection() {
     setUploading(true); setMsg(null)
     try {
       const buf = await file.arrayBuffer()
-      const wb2 = XLSX.read(buf, { type: 'array', cellDates: true })
+      const wb2 = XLSX.read(buf, { type: 'array' })
       const ws = wb2.Sheets['세액표']
       if (!ws) throw new Error("'세액표' 시트를 찾을 수 없습니다.")
       const rawRows = XLSX.utils.sheet_to_json(ws, { header: 1 })
@@ -1212,7 +1212,7 @@ function BulkUploadModal({ onClose }) {
     if (!f) return
     try {
       const buf = await f.arrayBuffer()
-      const wb = XLSX.read(buf, { type: 'array', cellDates: true })
+      const wb = XLSX.read(buf, { type: 'array' })
       setPreview(parseWorkbook(wb))
       setMsg(null)
     } catch (err) {
