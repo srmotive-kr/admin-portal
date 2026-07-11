@@ -7,7 +7,7 @@ export default function ReleaseManager() {
   const [releases, setReleases]   = useState([])
   const [loading, setLoading]     = useState(true)
   const [uploading, setUploading] = useState(false)
-  const [form, setForm]           = useState({ version: '', product_code: 'smart-hr-plus', notes: '' })
+  const [form, setForm]           = useState({ version: '', product_code: 'smart-hr-plus', notes: '', virustotal_url: '' })
   const [error, setError]         = useState('')
   const [success, setSuccess]     = useState('')
   const fileRef                   = useRef()
@@ -39,15 +39,16 @@ export default function ReleaseManager() {
 
       const { error: dbErr } = await supabase.from('releases').insert({
         product_code: form.product_code,
-        version:      form.version.trim(),
-        file_path:    filePath,
-        is_active:    false,
-        notes:        form.notes.trim() || null,
+        version:        form.version.trim(),
+        file_path:      filePath,
+        is_active:      false,
+        notes:          form.notes.trim() || null,
+        virustotal_url: form.virustotal_url.trim() || null,
       })
       if (dbErr) throw new Error(dbErr.message)
 
       setSuccess(`v${form.version} 업로드 완료!`)
-      setForm(f => ({ ...f, version: '', notes: '' }))
+      setForm(f => ({ ...f, version: '', notes: '', virustotal_url: '' }))
       fileRef.current.value = ''
       fetchReleases()
     } catch (e) {
@@ -100,6 +101,13 @@ export default function ReleaseManager() {
         </div>
         <div style={s.formRow}>
           <div style={{ ...s.field, flex: 3 }}>
+            <label style={s.label}>VirusTotal URL</label>
+            <input style={s.input} placeholder="https://www.virustotal.com/gui/file/..." value={form.virustotal_url}
+              onChange={e => setForm(f => ({ ...f, virustotal_url: e.target.value }))} />
+          </div>
+        </div>
+        <div style={s.formRow}>
+          <div style={{ ...s.field, flex: 3 }}>
             <label style={s.label}>설치 파일 <span style={{ color: '#EF4444' }}>*</span></label>
             <input ref={fileRef} type="file" accept=".exe,.dmg,.zip,.AppImage" style={s.fileInput} />
           </div>
@@ -124,7 +132,7 @@ export default function ReleaseManager() {
           <table style={s.table}>
             <thead>
               <tr>
-                {['버전','제품','파일 경로','노트','등록일','상태','액션'].map(h => (
+                {['버전','제품','파일 경로','노트','VirusTotal','등록일','상태','액션'].map(h => (
                   <th key={h} style={s.th}>{h}</th>
                 ))}
               </tr>
@@ -136,6 +144,11 @@ export default function ReleaseManager() {
                   <td style={s.td}><span style={s.code}>{rel.product_code}</span></td>
                   <td style={{ ...s.td, fontSize: 11, color: '#94A3B8', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{rel.file_path}</td>
                   <td style={s.td}>{rel.notes || '-'}</td>
+                  <td style={s.td}>
+                    {rel.virustotal_url
+                      ? <a href={rel.virustotal_url} target="_blank" rel="noreferrer" style={s.vtLink}>결과 보기</a>
+                      : <span style={{ color: '#94A3B8' }}>-</span>}
+                  </td>
                   <td style={s.td}>{rel.created_at?.slice(0, 10)}</td>
                   <td style={s.td}>
                     <span style={{ ...s.badge, background: rel.is_active ? '#16A34A' : '#475569' }}>
@@ -182,4 +195,5 @@ const s = {
   badge: { display: 'inline-block', padding: '2px 8px', borderRadius: 20, fontSize: 11, fontWeight: 700, color: '#fff' },
   code: { background: '#F1F5F9', padding: '2px 8px', borderRadius: 6, fontSize: 11, color: '#475569', fontFamily: 'monospace' },
   empty: { textAlign: 'center', padding: '40px 0', color: '#94A3B8', fontSize: 14 },
+  vtLink: { color: '#2563EB', fontSize: 12, textDecoration: 'none', fontWeight: 600 },
 }
