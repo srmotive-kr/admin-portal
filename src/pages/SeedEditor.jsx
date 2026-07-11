@@ -733,11 +733,13 @@ function SimpleTaxSection() {
 
 // ─── 초과세율표 섹션 ─────────────────────────────────────────────────────────
 function ExcessRateSection({ onDirtyChange }) {
-  const [rows, setRows]       = useState([])
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving]   = useState(false)
-  const [dirty, setDirty]     = useState(false)
-  const [msg, setMsg]         = useState(null)
+  const [rows, setRows]         = useState([])
+  const [loading, setLoading]   = useState(true)
+  const [saving, setSaving]     = useState(false)
+  const [dirty, setDirty]       = useState(false)
+  const [msg, setMsg]           = useState(null)
+  const [uploading, setUploading] = useState(false)
+  const fileRef = useRef(null)
 
   const load = async () => {
     setLoading(true); setMsg(null)
@@ -796,12 +798,72 @@ function ExcessRateSection({ onDirtyChange }) {
     setSaving(false); load()
   }
 
+  const downloadTemplate = () => {
+    const today = new Date().toISOString().slice(0, 10)
+    const headers = ['적용일자', '구간시작(원) 초과', '구간끝(원) 이하', '누적세액(원)', '보정비율', '세율']
+    const samples = [
+      [today, 10000000, 14000000,   25000, 0.98, 0.35],
+      [today, 14000000, 28000000, 1397000, 0.98, 0.38],
+      [today, 28000000, 30000000, 6610600, 0.98, 0.40],
+      [today, 30000000, 45000000, 7394600, 0.98, 0.40],
+      [today, 45000000, 87000000, 13394600, 0.98, 0.42],
+      [today, 87000000, '',       31034600, 0.98, 0.45],
+    ]
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...samples])
+    const wb2 = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb2, ws, '초과세율')
+    XLSX.writeFile(wb2, '초과세율표_업로드양식.xlsx')
+  }
+
+  const handleUpload = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploading(true); setMsg(null)
+    try {
+      const buf = await file.arrayBuffer()
+      const wb2 = XLSX.read(buf, { type: 'array' })
+      const ws = wb2.Sheets['초과세율']
+      if (!ws) throw new Error("'초과세율' 시트를 찾을 수 없습니다.")
+      const rawRows = XLSX.utils.sheet_to_json(ws, { header: 1 })
+      const safeN = (v, def = 0) => { const n = Number(v ?? def); return isNaN(n) ? def : n }
+      const parsed = []
+      for (let i = 1; i < rawRows.length; i++) {
+        const r = rawRows[i]
+        const af = xlDateToStr(r[0])
+        if (!af) continue
+        const tf = safeN(r[1], NaN)
+        if (isNaN(tf)) continue
+        const ttRaw = r[2]
+        const tt = (ttRaw == null || String(ttRaw).trim() === '') ? null : safeN(ttRaw)
+        parsed.push({ apply_from: af, threshold_from: tf, threshold_to: tt, accumulated: safeN(r[3]), factor: safeN(r[4], 0.98), rate: safeN(r[5]) })
+      }
+      if (!parsed.length) throw new Error('업로드 데이터가 없습니다. 양식을 확인하세요.')
+      const afs = [...new Set(parsed.map(r => r.apply_from))]
+      for (const af of afs) {
+        const { error: delErr } = await supabase.from('income_tax_excess_rate').delete().eq('apply_from', af)
+        if (delErr) throw delErr
+      }
+      const { error } = await supabase.from('income_tax_excess_rate').insert(parsed)
+      if (error) throw error
+      setMsg({ type: 'success', text: `${afs.join(', ')} 초과세율표 ${parsed.length}건 업로드 완료` })
+      load()
+    } catch (err) {
+      setMsg({ type: 'error', text: err.message })
+    }
+    setUploading(false); e.target.value = ''
+  }
+
   return (
     <div style={s.card}>
       <div style={s.toolbar}>
         <span style={s.cnt}>총 <strong style={{ color: '#2563EB' }}>{rows.length}</strong>개 구간</span>
         <div style={{ display: 'flex', gap: 6 }}>
           <button style={s.btn('ghost')} onClick={load}>↺ 새로고침</button>
+          <button style={s.btn('ghost')} onClick={downloadTemplate}>📥 양식 다운로드</button>
+          <button style={s.btn('success')} onClick={() => fileRef.current?.click()} disabled={uploading}>
+            {uploading ? '업로드 중…' : '📤 Excel 업로드'}
+          </button>
+          <input ref={fileRef} type="file" accept=".xlsx" style={{ display: 'none' }} onChange={handleUpload} />
           <button style={s.btn('ghost')} onClick={handleAdd}>+ 행 추가</button>
           <button style={s.btn('primary')} onClick={handleSave} disabled={saving || !dirty}>
             {saving ? '저장 중…' : '저장'}
@@ -1210,15 +1272,16 @@ function BulkUploadModal({ onClose }) {
 
   const downloadBulkTemplate = () => {
     const today = new Date().toISOString().slice(0, 10)
+    const year  = new Date().getFullYear()
     const wb2 = XLSX.utils.book_new()
 
-    // 세액표 시트
+    // 세액표 시트 (파서: 헤더=행0, 데이터=행1+, A=적용일자, B=이상, C=미만, D~N=1~11인)
     const taxHeaders = ['적용일자', '이상(원)', '미만(원)', '1인', '2인', '3인', '4인', '5인', '6인', '7인', '8인', '9인', '10인', '11인']
     const taxSample1 = [today, 770000, 775000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     const taxSample2 = ['', 775000, 780000, 19220, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     XLSX.utils.book_append_sheet(wb2, XLSX.utils.aoa_to_sheet([taxHeaders, taxSample1, taxSample2]), '세액표')
 
-    // 초과세율 시트
+    // 초과세율 시트 (파서: 헤더=행0, 데이터=행1+, A=적용일자, B=구간시작, C=구간끝, D=누적세액, E=보정비율, F=세율)
     const erHeaders = ['적용일자', '구간시작(원) 초과', '구간끝(원) 이하', '누적세액(원)', '보정비율', '세율']
     const erSamples = [
       [today, 10000000, 14000000,   25000, 0.98, 0.35],
@@ -1230,13 +1293,30 @@ function BulkUploadModal({ onClose }) {
     ]
     XLSX.utils.book_append_sheet(wb2, XLSX.utils.aoa_to_sheet([erHeaders, ...erSamples]), '초과세율')
 
-    // 보험요율 시트
+    // 보험요율 시트 (파서: 헤더=행0, 데이터=행1+)
     const insHeaders = ['연도', '국민연금(%)', '건강보험(%)', '장기요양(%)', '고용보험(%)', '적용시작', '적용종료', '비고']
     const insSample  = [2026, 9, 7.09, 12.95, 1.8, '2026-01-01', '2026-12-31', '']
     XLSX.utils.book_append_sheet(wb2, XLSX.utils.aoa_to_sheet([insHeaders, insSample]), '보험요율')
 
+    // 공휴일 시트 (파서: 행0=빈줄, 행1=헤더, 행2+=데이터 / 헤더키: 연도, 날짜, 공휴일명)
+    const holTitle   = ['공휴일 업로드 양식 — 행1이 헤더, 행2부터 데이터']
+    const holHeaders = ['연도', '날짜', '공휴일명']
+    const holSamples = [
+      [year, `${year}-01-01`, '신정'],
+      [year, `${year}-03-01`, '삼일절'],
+    ]
+    XLSX.utils.book_append_sheet(wb2, XLSX.utils.aoa_to_sheet([holTitle, holHeaders, ...holSamples]), '공휴일')
+
+    // 출산육아급여기준 시트 (파서: 행0=빈줄, 행1=헤더(영문key), 행2+=데이터)
+    const lrTitle   = ['출산육아급여기준 업로드 양식 — 행1이 헤더(영문), 행2부터 데이터']
+    const lrHeaders = ['year', 'maternity_ei_cap', 'paternity_days', 'paternity_ei_cap',
+                       'parental_cap_1_3', 'parental_cap_4_6', 'parental_cap_7p',
+                       'parental_rate_1_6', 'parental_rate_7p', 'parental_floor', 'memo']
+    const lrSample  = [year, 2000000, 10, 2000000, 3000000, 2000000, 1600000, 1, 0.8, 700000, '']
+    XLSX.utils.book_append_sheet(wb2, XLSX.utils.aoa_to_sheet([lrTitle, lrHeaders, lrSample]), '출산육아급여기준')
+
     const ds = today.replace(/-/g, '')
-    XLSX.writeFile(wb2, `seed_export_${ds}_v1.xlsx`)
+    XLSX.writeFile(wb2, `seed_전체업로드양식_${ds}.xlsx`)
   }
 
   const handleImport = async () => {
