@@ -8,6 +8,8 @@ import LicenseManager from './pages/LicenseManager'
 import ReleaseManager from './pages/ReleaseManager'
 import FreeRenewal from './pages/FreeRenewal'
 import SeedEditor from './pages/SeedEditor'
+import ChecklistPage from './pages/ChecklistPage'
+import BroadcastManager from './pages/BroadcastManager'
 
 function AuthGuard({ children }) {
   const [session, setSession] = useState(undefined)
@@ -41,6 +43,8 @@ export default function App() {
                 <Route path="/releases" element={<ReleaseManager />} />
                 <Route path="/renewals" element={<FreeRenewal />} />
                 <Route path="/seed" element={<SeedEditor />} />
+                <Route path="/checklist" element={<ChecklistPage />} />
+                <Route path="/broadcast" element={<BroadcastManager />} />
               </Routes>
             </Layout>
           </AuthGuard>

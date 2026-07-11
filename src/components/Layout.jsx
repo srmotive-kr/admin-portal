@@ -7,6 +7,8 @@ const NAV = [
   { to: '/releases', label: '릴리즈 관리', icon: '📦' },
   { to: '/renewals', label: 'FREE 갱신 관리', icon: '♻️' },
   { to: '/seed', label: 'Seed 편집기', icon: '🗄️' },
+  { to: '/checklist', label: '연간 관리 항목', icon: '📋' },
+  { to: '/broadcast', label: '공지 관리', icon: '📢' },
 ]
 
 export default function Layout({ children }) {
