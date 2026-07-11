@@ -839,12 +839,19 @@ function ExcessRateSection({ onDirtyChange }) {
       }
       if (!parsed.length) throw new Error('업로드 데이터가 없습니다. 양식을 확인하세요.')
       const afs = [...new Set(parsed.map(r => r.apply_from))]
+      // 기존 데이터 백업 (삽입 실패 시 복원용)
+      const { data: backup } = await supabase.from('income_tax_excess_rate')
+        .select('apply_from,threshold_from,threshold_to,accumulated,factor,rate')
+        .in('apply_from', afs)
       for (const af of afs) {
         const { error: delErr } = await supabase.from('income_tax_excess_rate').delete().eq('apply_from', af)
         if (delErr) throw delErr
       }
       const { error } = await supabase.from('income_tax_excess_rate').insert(parsed)
-      if (error) throw error
+      if (error) {
+        if (backup?.length) await supabase.from('income_tax_excess_rate').insert(backup)
+        throw error
+      }
       setMsg({ type: 'success', text: `${afs.join(', ')} 초과세율표 ${parsed.length}건 업로드 완료` })
       load()
     } catch (err) {
