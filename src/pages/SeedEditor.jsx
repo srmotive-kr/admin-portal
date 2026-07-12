@@ -372,6 +372,7 @@ function InsuranceTab({ onDirtyChange }) {
     setItems(prev => [...prev, {
       id: null, year: new Date().getFullYear(),
       pension_rate: 0.09, health_rate: 0.0709, care_rate: 0.1295, employ_rate: 0.018,
+      pension_upper_limit: 0, pension_lower_limit: 0,
       apply_from: null, apply_to: null, memo: '', _dirty: true,
     }])
     setDirty(true)
@@ -431,6 +432,8 @@ function InsuranceTab({ onDirtyChange }) {
               <tr>
                 <th style={{ ...s.th, width: 80 }}>연도</th>
                 <th style={{ ...s.th, width: 150, textAlign: 'center' }}>국민연금</th>
+                <th style={{ ...s.th, width: 130, textAlign: 'center' }}>연금 상한액</th>
+                <th style={{ ...s.th, width: 130, textAlign: 'center' }}>연금 하한액</th>
                 <th style={{ ...s.th, width: 150, textAlign: 'center' }}>건강보험</th>
                 <th style={{ ...s.th, width: 150, textAlign: 'center' }}>장기요양</th>
                 <th style={{ ...s.th, width: 150, textAlign: 'center' }}>고용보험</th>
@@ -448,7 +451,25 @@ function InsuranceTab({ onDirtyChange }) {
                       type="number" value={it.year}
                       onChange={e => change(idx, 'year', Number(e.target.value))} />
                   </td>
-                  {['pension_rate','health_rate','care_rate','employ_rate'].map(key => (
+                  <td style={{ ...s.td, textAlign: 'center' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, justifyContent: 'center' }}>
+                      <input style={{ ...s.input, width: 70, textAlign: 'right' }}
+                        type="number" step="0.0001" value={parseFloat((Number(it.pension_rate || 0) * 100).toFixed(4))}
+                        onChange={e => change(idx, 'pension_rate', Number(e.target.value) / 100)} />
+                      <span style={{ fontSize: 11, color: '#94A3B8' }}>%</span>
+                    </div>
+                  </td>
+                  <td style={{ ...s.td, textAlign: 'center' }}>
+                    <input style={{ ...s.input, width: 110, textAlign: 'right' }}
+                      type="number" value={it.pension_upper_limit || 0}
+                      onChange={e => change(idx, 'pension_upper_limit', Number(e.target.value))} />
+                  </td>
+                  <td style={{ ...s.td, textAlign: 'center' }}>
+                    <input style={{ ...s.input, width: 110, textAlign: 'right' }}
+                      type="number" value={it.pension_lower_limit || 0}
+                      onChange={e => change(idx, 'pension_lower_limit', Number(e.target.value))} />
+                  </td>
+                  {['health_rate','care_rate','employ_rate'].map(key => (
                     <td key={key} style={{ ...s.td, textAlign: 'center' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 4, justifyContent: 'center' }}>
                         <input style={{ ...s.input, width: 70, textAlign: 'right' }}
@@ -479,7 +500,7 @@ function InsuranceTab({ onDirtyChange }) {
                 </tr>
               ))}
               {items.length === 0 && (
-                <tr><td colSpan={9} style={s.empty}>등록된 보험요율이 없습니다.</td></tr>
+                <tr><td colSpan={11} style={s.empty}>등록된 보험요율이 없습니다.</td></tr>
               )}
             </tbody>
           </table>
@@ -1168,14 +1189,16 @@ function parseWorkbook(wb) {
       const r = rows[i]
       if (!r[ci('연도')]) continue
       insurance.push({
-        year:         safeN(r[ci('연도')]),
-        pension_rate: safeN(r[ci('국민연금(%)')]) / 100,
-        health_rate:  safeN(r[ci('건강보험(%)')]) / 100,
-        care_rate:    safeN(r[ci('장기요양(%)')]) / 100,
-        employ_rate:  safeN(r[ci('고용보험(%)')]) / 100,
-        apply_from:   toYM(r[ci('적용시작')]),
-        apply_to:     toYM(r[ci('적용종료')]),
-        memo: r[ci('비고')] || '',
+        year:                safeN(r[ci('연도')]),
+        pension_rate:        safeN(r[ci('국민연금(%)')]) / 100,
+        pension_upper_limit: safeN(r[ci('연금 상한액(원)')]),
+        pension_lower_limit: safeN(r[ci('연금 하한액(원)')]),
+        health_rate:         safeN(r[ci('건강보험(%)')]) / 100,
+        care_rate:           safeN(r[ci('장기요양(%)')]) / 100,
+        employ_rate:         safeN(r[ci('고용보험(%)')]) / 100,
+        apply_from:          toYM(r[ci('적용시작')]),
+        apply_to:            toYM(r[ci('적용종료')]),
+        memo:                r[ci('비고')] || '',
       })
     }
   }
@@ -1301,8 +1324,8 @@ function BulkUploadModal({ onClose }) {
     XLSX.utils.book_append_sheet(wb2, XLSX.utils.aoa_to_sheet([erHeaders, ...erSamples]), '초과세율')
 
     // 보험요율 시트 (파서: 헤더=행0, 데이터=행1+)
-    const insHeaders = ['연도', '국민연금(%)', '건강보험(%)', '장기요양(%)', '고용보험(%)', '적용시작', '적용종료', '비고']
-    const insSample  = [2026, 9, 7.09, 12.95, 1.8, '2026-01-01', '2026-12-31', '']
+    const insHeaders = ['연도', '국민연금(%)', '연금 상한액(원)', '연금 하한액(원)', '건강보험(%)', '장기요양(%)', '고용보험(%)', '적용시작', '적용종료', '비고']
+    const insSample  = [2026, 9, 6170000, 390000, 7.09, 12.95, 1.8, '2026-01-01', '2026-12-31', '']
     XLSX.utils.book_append_sheet(wb2, XLSX.utils.aoa_to_sheet([insHeaders, insSample]), '보험요율')
 
     // 공휴일 시트 (파서: 행0=빈줄, 행1=헤더, 행2+=데이터 / 헤더키: 연도, 날짜, 공휴일명)
