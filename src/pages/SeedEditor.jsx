@@ -1036,40 +1036,38 @@ function HolidayTab({ onDirtyChange }) {
   }
 
   const downloadTemplate = () => {
-    const rows = [
-      '# holiday_type: NATIONAL=법정공휴일 / SUBSTITUTE=대체공휴일',
-      'holiday_date,holiday_name,holiday_type',
-      `${year}-01-01,신정,NATIONAL`,
-      `${year}-03-01,삼일절,NATIONAL`,
-      `${year}-05-05,어린이날,NATIONAL`,
-      `${year}-05-06,어린이날 대체공휴일,SUBSTITUTE`,
-    ].join('\n')
-    const blob = new Blob(['﻿' + rows], { type: 'text/csv;charset=utf-8;' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url; a.download = `공휴일_업로드양식_${year}.csv`; a.click(); URL.revokeObjectURL(url)
+    const wb = XLSX.utils.book_new()
+    const holTitle   = ['공휴일 업로드 양식 — 행1이 헤더, 행2부터 데이터']
+    const holHeaders = ['연도', '날짜', '공휴일명']
+    const holSamples = [
+      [year, `${year}-01-01`, '신정'],
+      [year, `${year}-03-01`, '삼일절'],
+      [year, `${year}-05-05`, '어린이날'],
+      [year, `${year}-05-06`, '어린이날 대체공휴일'],
+    ]
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([holTitle, holHeaders, ...holSamples]), '공휴일')
+    XLSX.writeFile(wb, `공휴일_업로드양식_${year}.xlsx`)
   }
 
   const handleUpload = async (e) => {
     const file = e.target.files?.[0]
     if (!file) return
     setUploading(true); setMsg(null)
-    const text = await file.text()
-    const lines = text.replace(/\r/g, '').trim().split('\n')
-    const rows = []
-    for (let i = 1; i < lines.length; i++) {
-      const line = lines[i].trim()
-      if (!line || line.startsWith('#')) continue
-      const [date, name, type] = line.split(',').map(v => v.trim())
-      if (!date || !name) continue
-      rows.push({ year, holiday_date: date, holiday_name: name, holiday_type: type || 'NATIONAL' })
+    try {
+      const buf = await file.arrayBuffer()
+      const wb = XLSX.read(buf, { type: 'array' })
+      const { holidays: rows } = parseWorkbook(wb)
+      if (!rows.length) { setMsg({ type: 'error', text: 'Excel 파싱 결과가 없습니다. 양식을 확인하세요.' }); setUploading(false); e.target.value = ''; return }
+      const yrs = [...new Set(rows.map(r => r.year))]
+      for (const yr of yrs) await supabase.from('holidays').delete().eq('year', yr)
+      const { error } = await supabase.from('holidays').insert(rows)
+      if (error) { setMsg({ type: 'error', text: error.message }); setUploading(false); e.target.value = ''; return }
+      setMsg({ type: 'success', text: `공휴일 ${rows.length}건 업로드 완료 (${yrs.join(', ')}년)` })
+      load()
+    } catch (err) {
+      setMsg({ type: 'error', text: 'Excel 읽기 실패: ' + err.message })
     }
-    if (!rows.length) { setMsg({ type: 'error', text: 'CSV 파싱 결과가 없습니다. 양식을 확인하세요.' }); setUploading(false); e.target.value = ''; return }
-    await supabase.from('holidays').delete().eq('year', year)
-    const { error } = await supabase.from('holidays').insert(rows)
-    if (error) { setMsg({ type: 'error', text: error.message }); setUploading(false); e.target.value = ''; return }
-    setMsg({ type: 'success', text: `${year}년 공휴일 ${rows.length}건 업로드 완료` })
-    setUploading(false); load(); e.target.value = ''
+    setUploading(false); e.target.value = ''
   }
 
   return (
@@ -1091,9 +1089,9 @@ function HolidayTab({ onDirtyChange }) {
         <div style={{ display: 'flex', gap: 6 }}>
           <button style={s.btn('ghost')} onClick={downloadTemplate} disabled={saving || uploading}>📥 양식 다운로드</button>
           <button style={s.btn('ghost')} onClick={() => fileRef.current?.click()} disabled={saving || uploading}>
-            {uploading ? '업로드 중…' : '📤 CSV 업로드'}
+            {uploading ? '업로드 중…' : '📤 Excel 업로드'}
           </button>
-          <input ref={fileRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleUpload} />
+          <input ref={fileRef} type="file" accept=".xlsx" style={{ display: 'none' }} onChange={handleUpload} />
           <button style={s.btn('ghost')} onClick={load} disabled={saving}>↺ 새로고침</button>
           <button style={s.btn('success')} onClick={handleAdd} disabled={saving}>+ 공휴일 추가</button>
           <button style={s.btn('primary')} onClick={handleSave} disabled={saving || !dirty}>
