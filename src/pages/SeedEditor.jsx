@@ -112,6 +112,7 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
       taxable_yn:        r.taxable_yn        ?? 'N',
       ordinary_yn:       r.ordinary_yn       ?? 'Y',
       is_system_default: r.is_system_default ?? 0,
+      is_settle_code:    r.is_settle_code    ?? 0,
     })))
     setDirty(false)
     setLoading(false)
@@ -129,7 +130,7 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
     const maxOrder = items.length ? Math.max(...items.map(it => it.sort_order || 0)) + 10 : 10
     setItems(prev => [...prev, {
       id: null, group_code: groupCode, code: '', name: '',
-      taxable_yn: 'N', ordinary_yn: 'Y', is_system_default: 0,
+      taxable_yn: 'N', ordinary_yn: 'Y', is_system_default: 0, is_settle_code: 0,
       sort_order: maxOrder, use_yn: 'Y', _dirty: true,
     }])
     setDirty(true)
@@ -141,6 +142,17 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
     const tmp = arr[idx]; arr[idx] = arr[idx + dir]; arr[idx + dir] = tmp
     const reordered = arr.map((it, i) => ({ ...it, sort_order: (i + 1) * 10, _dirty: true }))
     setItems(reordered); setDirty(true)
+  }
+
+  const handleToggleSystem = (idx, makeSystem) => {
+    const it = items[idx]
+    if (!makeSystem && it.is_system_default) {
+      const ok = window.confirm(
+        '이 코드를 일반코드로 변경하면 시스템에 영향을 미칠 수 있습니다.\n계속하시겠습니까?'
+      )
+      if (!ok) return
+    }
+    change(idx, 'is_system_default', makeSystem ? 1 : 0)
   }
 
   const handleDelete = async (idx) => {
@@ -169,6 +181,7 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
         taxable_yn:        it.taxable_yn,
         ordinary_yn:       it.ordinary_yn,
         is_system_default: it.is_system_default || 0,
+        is_settle_code:    it.is_settle_code    || 0,
       }
       if (!payload.name) continue
       if (it.id === null) {
@@ -241,13 +254,14 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
                   {grp?.hasOrdinary && (
                     <th style={{ ...s.th, width: 120, textAlign: 'center' }}>통상임금</th>
                   )}
+                  <th style={{ ...s.th, width: 90, textAlign: 'center' }}>구분</th>
                   <th style={{ ...s.th, width: 64, textAlign: 'center' }}>이동</th>
                   <th style={{ ...s.th, width: 56, textAlign: 'center' }}>삭제</th>
                 </tr>
               </thead>
               <tbody>
                 {items.length === 0 ? (
-                  <tr><td colSpan={9} style={s.empty}>등록된 데이터가 없습니다.</td></tr>
+                  <tr><td colSpan={10} style={s.empty}>등록된 데이터가 없습니다.</td></tr>
                 ) : items.map((it, idx) => {
                   const isSys = !!it.is_system_default
                   return (
@@ -321,6 +335,13 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
                           </td>
                         )
                       })()}
+                      <td style={{ ...s.td, textAlign: 'center' }}>
+                        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer', fontSize: 11, fontWeight: 600, color: isSys ? '#B45309' : '#64748B' }}>
+                          <input type="checkbox" checked={isSys}
+                            onChange={e => handleToggleSystem(idx, e.target.checked)} />
+                          {isSys ? '시스템' : '일반'}
+                        </label>
+                      </td>
                       <td style={{ ...s.td, textAlign: 'center' }}>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'center' }}>
                           <button style={s.arrowBtn} onClick={() => handleMove(idx, -1)} disabled={idx === 0}>▲</button>
@@ -1000,13 +1021,25 @@ function HolidayTab({ onDirtyChange }) {
   const handleAdd = () => {
     setItems(prev => [...prev, {
       id: null, year, holiday_date: `${year}-01-01`,
-      holiday_name: '', holiday_type: 'NATIONAL', _dirty: true,
+      holiday_name: '', holiday_type: 'NATIONAL', is_system_default: 0, _dirty: true,
     }])
     setDirty(true)
   }
 
+  const handleToggleSystem = (idx, makeSystem) => {
+    const it = items[idx]
+    if (!makeSystem && it.is_system_default) {
+      const ok = window.confirm(
+        '이 공휴일을 일반으로 변경하면 시스템에 영향을 미칠 수 있습니다.\n계속하시겠습니까?'
+      )
+      if (!ok) return
+    }
+    change(idx, 'is_system_default', makeSystem ? 1 : 0)
+  }
+
   const handleDelete = async (idx) => {
     const it = items[idx]
+    if (it.is_system_default) return
     if (it.id !== null) {
       if (!window.confirm('삭제하시겠습니까?')) return
       const { error } = await supabase.from('holidays').delete().eq('id', it.id)
@@ -1107,36 +1140,62 @@ function HolidayTab({ onDirtyChange }) {
               <th style={s.th}>날짜</th>
               <th style={s.th}>공휴일명</th>
               <th style={{ ...s.th, width: 120 }}>유형</th>
+              <th style={{ ...s.th, width: 90, textAlign: 'center' }}>구분</th>
               <th style={{ ...s.th, width: 64, textAlign: 'center' }}>삭제</th>
             </tr>
           </thead>
           <tbody>
             {items.length === 0 ? (
-              <tr><td colSpan={4} style={s.empty}>등록된 공휴일이 없습니다.</td></tr>
-            ) : items.map((it, idx) => (
-              <tr key={idx} style={{ background: it._dirty ? 'rgba(37,99,235,.03)' : 'transparent', borderBottom: '1px solid #F1F5F9' }}>
+              <tr><td colSpan={5} style={s.empty}>등록된 공휴일이 없습니다.</td></tr>
+            ) : items.map((it, idx) => {
+              const isSys = !!it.is_system_default
+              return (
+              <tr key={idx} style={{ background: it._dirty ? 'rgba(37,99,235,.03)' : (isSys ? 'rgba(251,191,36,.04)' : 'transparent'), borderBottom: '1px solid #F1F5F9' }}>
                 <td style={s.td}>
-                  <input style={{ ...s.input, width: 120 }} type="date"
-                    value={it.holiday_date || ''}
-                    onChange={e => change(idx, 'holiday_date', e.target.value)} />
+                  {isSys ? (
+                    <span style={s.codeTag}>{it.holiday_date}</span>
+                  ) : (
+                    <input style={{ ...s.input, width: 120 }} type="date"
+                      value={it.holiday_date || ''}
+                      onChange={e => change(idx, 'holiday_date', e.target.value)} />
+                  )}
                 </td>
                 <td style={s.td}>
-                  <input style={s.input} value={it.holiday_name || ''}
+                  <input style={{ ...s.input, background: isSys ? '#F0F4FF' : '#F8FAFC' }} value={it.holiday_name || ''}
                     onChange={e => change(idx, 'holiday_name', e.target.value)}
                     placeholder="공휴일명" />
                 </td>
                 <td style={s.td}>
-                  <select style={s.select} value={it.holiday_type || 'NATIONAL'}
-                    onChange={e => change(idx, 'holiday_type', e.target.value)}>
-                    <option value="NATIONAL">법정공휴일</option>
-                    <option value="SUBSTITUTE">대체공휴일</option>
-                  </select>
+                  {isSys ? (
+                    <span style={{ fontSize: 13, color: '#64748B' }}>
+                      {{ NATIONAL: '법정공휴일', SUBSTITUTE: '대체공휴일', TEMPORARY: '임시공휴일' }[it.holiday_type] || it.holiday_type}
+                    </span>
+                  ) : (
+                    <select style={s.select} value={it.holiday_type || 'NATIONAL'}
+                      onChange={e => change(idx, 'holiday_type', e.target.value)}>
+                      <option value="NATIONAL">법정공휴일</option>
+                      <option value="SUBSTITUTE">대체공휴일</option>
+                      <option value="TEMPORARY">임시공휴일</option>
+                    </select>
+                  )}
                 </td>
                 <td style={{ ...s.td, textAlign: 'center' }}>
-                  <button style={s.btnDel} onClick={() => handleDelete(idx)}>삭제</button>
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer', fontSize: 11, fontWeight: 600, color: isSys ? '#B45309' : '#64748B' }}>
+                    <input type="checkbox" checked={isSys}
+                      onChange={e => handleToggleSystem(idx, e.target.checked)} />
+                    {isSys ? '시스템' : '일반'}
+                  </label>
+                </td>
+                <td style={{ ...s.td, textAlign: 'center' }}>
+                  {isSys ? (
+                    <span style={{ fontSize: 11, color: '#C0CBDF' }}>잠금</span>
+                  ) : (
+                    <button style={s.btnDel} onClick={() => handleDelete(idx)}>삭제</button>
+                  )}
                 </td>
               </tr>
-            ))}
+              )
+            })}
           </tbody>
         </table>
       )}
@@ -1350,7 +1409,9 @@ function BulkUploadModal({ onClose }) {
       ['90','기타수당',90,'Y','Y','Y','Y'],['91','식대',91,'Y','Y','N','N'],
       ['92','교통비',92,'Y','Y','N','N'],['99','기타비과세수당',99,'Y','N','N','N'],
       ['991','연월차정산',991,'Y','Y','Y','N'],['992','보상휴가정산',992,'Y','Y','Y','N'],
-      ['993','근로소득 정산',993,'Y','Y','N','N'],['994','건강·고용보험정산',994,'Y','Y','N','N'],
+      ['993','연말정산소득세',993,'Y','Y','N','N'],['994','연말정산지방소득세',994,'Y','Y','N','N'],
+      ['995','건강보험료정산',995,'Y','Y','N','N'],['996','고용보험료정산',996,'Y','Y','N','N'],
+      ['999','급여소급정산',999,'Y','Y','Y','N'],
     ])
     mkCode('BONUS_TYPE', '상여금구분', codeBase, [
       ['10','정기상여',10,'Y','N'],['20','성과급',20,'Y','N'],
@@ -1364,6 +1425,7 @@ function BulkUploadModal({ onClose }) {
       ['50','출산전후휴가(90일)',50,'Y','Y','Y'],
       ['51','출산전후휴가(쌍둥이120일)',51,'Y','Y','Y'],
       ['52','배우자출산휴가(20일)',52,'Y','Y','Y'],['53','육아휴직',53,'Y','Y','Y'],
+      ['59','개인휴직',59,'Y','Y','N'],
       ['60','병가',60,'Y','N','Y'],['70','경조사',70,'Y','N','Y'],
       ['80','공가',80,'Y','N','Y'],['90','무급휴가',90,'Y','N','N'],
     ])
