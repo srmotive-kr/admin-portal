@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { useProduct } from '../lib/ProductContext'
 
 const GRADES = ['', 'FREE', 'STARTER', 'PRO', 'ENTERPRISE']
 const STATUSES = ['', 'ACTIVE', 'PENDING', 'EXPIRED', 'REVOKED']
@@ -28,6 +29,7 @@ function fmt(iso) {
 }
 
 export default function LicenseManager() {
+  const { productCode } = useProduct()
   const [rows, setRows] = useState([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -42,6 +44,7 @@ export default function LicenseManager() {
     setLoading(true)
     setLoadError('')
     let q = supabase.from('licenses').select('*', { count: 'exact' })
+    if (productCode) q = q.eq('product_code', productCode)
     if (filter.q) q = q.or(`license_key.ilike.%${filter.q}%,email.ilike.%${filter.q}%`)
     if (filter.grade) q = q.eq('grade', filter.grade)
     if (filter.status) q = q.eq('status', filter.status)
@@ -54,7 +57,7 @@ export default function LicenseManager() {
     setLoading(false)
   }
 
-  useEffect(() => { load() }, [filter, page])
+  useEffect(() => { load() }, [filter, page, productCode])
 
   function handleCheck(id) {
     setRows(r => r.map(x => x.id === id ? { ...x, _checked: !x._checked } : x))
@@ -467,6 +470,8 @@ function DetailPanel({ row, onClose, onRefresh }) {
 }
 
 function IssueModal({ onClose, onRefresh }) {
+  const { productCode, current } = useProduct()
+  const prefix = current?.license_prefix || 'SMHR'
   const [form, setForm] = useState({ grade: 'FREE', email: '', expires_at: '', notes: '', channel: 'A' })
   const [saving, setSaving] = useState(false)
   const [done, setDone] = useState(null)
@@ -475,7 +480,7 @@ function IssueModal({ onClose, onRefresh }) {
   async function issue() {
     setSaving(true)
     setIssueError('')
-    const key = `SMHR-${uuid4()}`
+    const key = `${prefix}-${uuid4()}`
     const { data, error } = await supabase.from('licenses').insert({
       license_key: key,
       grade: form.grade,
@@ -484,7 +489,7 @@ function IssueModal({ onClose, onRefresh }) {
       notes: form.notes || null,
       channel: form.channel,
       status: 'ACTIVE',
-      product_code: 'smart-hr-plus',
+      product_code: productCode,
       max_emps:  { FREE: 4, STARTER: 9, PRO: 29, ENTERPRISE: null }[form.grade] ?? 4,
       max_users: { FREE: 1, STARTER: 1, PRO: 2,  ENTERPRISE: 0    }[form.grade] ?? 1,
     }).select().single()

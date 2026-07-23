@@ -1,23 +1,27 @@
 import { NavLink, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
+import { useProduct } from '../lib/ProductContext'
 
 const NAV = [
   { to: '/', label: '대시보드', icon: '◈' },
   { to: '/licenses', label: '라이선스 관리', icon: '🔑' },
   { to: '/releases', label: '릴리즈 관리', icon: '📦' },
   { to: '/renewals', label: 'FREE 갱신 관리', icon: '♻️' },
-  { to: '/seed', label: 'Seed 편집기', icon: '🗄️' },
+  { to: '/seed', label: 'Seed 편집기', icon: '🗄️', productOnly: 'smart-hr-plus' },
   { to: '/checklist', label: '연간 관리 항목', icon: '📋' },
   { to: '/broadcast', label: '공지 관리', icon: '📢' },
 ]
 
 export default function Layout({ children }) {
   const navigate = useNavigate()
+  const { products, productCode, selectProduct } = useProduct()
 
   async function handleLogout() {
     await supabase.auth.signOut()
     navigate('/login')
   }
+
+  const nav = NAV.filter(item => !item.productOnly || item.productOnly === productCode)
 
   return (
     <div style={styles.shell}>
@@ -36,8 +40,20 @@ export default function Layout({ children }) {
             <div style={styles.logoSub}>Admin Portal</div>
           </div>
 
+          <div style={styles.productSwitcher}>
+            <select
+              style={styles.productSelect}
+              value={productCode || ''}
+              onChange={e => selectProduct(e.target.value)}
+            >
+              {products.map(p => (
+                <option key={p.code} value={p.code}>{p.display_name}</option>
+              ))}
+            </select>
+          </div>
+
           <nav style={styles.nav}>
-            {NAV.map(({ to, label, icon }) => (
+            {nav.map(({ to, label, icon }) => (
               <NavLink
                 key={to}
                 to={to}
@@ -91,6 +107,19 @@ const styles = {
     marginBottom: 12,
   },
   logoSub: { fontSize: 9, color: '#ffffff', letterSpacing: '1.5px', textTransform: 'uppercase' },
+  productSwitcher: { padding: '0 20px 14px' },
+  productSelect: {
+    width: '100%',
+    padding: '8px 10px',
+    borderRadius: 8,
+    border: '1px solid rgba(255,255,255,0.1)',
+    background: 'rgba(255,255,255,0.05)',
+    color: '#fff',
+    fontSize: 12.5,
+    fontWeight: 600,
+    fontFamily: 'inherit',
+    cursor: 'pointer',
+  },
   nav: { display: 'flex', flexDirection: 'column', padding: '0 10px', gap: 2 },
   navItem: {
     display: 'flex',

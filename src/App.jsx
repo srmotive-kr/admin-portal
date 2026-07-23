@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { supabase } from './lib/supabaseClient'
+import { ProductProvider } from './lib/ProductContext'
 import Login from './pages/Login'
 import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
@@ -36,17 +37,19 @@ export default function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/*" element={
           <AuthGuard>
-            <Layout>
-              <Routes>
-                <Route path="/" element={<Dashboard />} />
-                <Route path="/licenses" element={<LicenseManager />} />
-                <Route path="/releases" element={<ReleaseManager />} />
-                <Route path="/renewals" element={<FreeRenewal />} />
-                <Route path="/seed" element={<SeedEditor />} />
-                <Route path="/checklist" element={<ChecklistPage />} />
-                <Route path="/broadcast" element={<BroadcastManager />} />
-              </Routes>
-            </Layout>
+            <ProductProvider>
+              <Layout>
+                <Routes>
+                  <Route path="/" element={<Dashboard />} />
+                  <Route path="/licenses" element={<LicenseManager />} />
+                  <Route path="/releases" element={<ReleaseManager />} />
+                  <Route path="/renewals" element={<FreeRenewal />} />
+                  <Route path="/seed" element={<SeedEditor />} />
+                  <Route path="/checklist" element={<ChecklistPage />} />
+                  <Route path="/broadcast" element={<BroadcastManager />} />
+                </Routes>
+              </Layout>
+            </ProductProvider>
           </AuthGuard>
         } />
       </Routes>

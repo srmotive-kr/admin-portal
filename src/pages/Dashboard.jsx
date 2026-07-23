@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { useProduct } from '../lib/ProductContext'
 
 function StatCard({ label, value, color, sub }) {
   return (
@@ -12,22 +13,25 @@ function StatCard({ label, value, color, sub }) {
 }
 
 export default function Dashboard() {
+  const { productCode } = useProduct()
   const [stats, setStats] = useState({ active: null, newMonth: null, expiringSoon: null, pending: null })
   const [events, setEvents] = useState([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     async function load() {
+      setLoading(true)
       const now = new Date()
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
       const in30 = new Date(Date.now() + 30 * 86400000).toISOString()
+      const scope = (q) => productCode ? q.eq('product_code', productCode) : q
 
       const [activeRes, newRes, expiringRes, pendingRes, eventsRes] = await Promise.all([
-        supabase.from('licenses').select('id', { count: 'exact', head: true }).eq('status', 'ACTIVE'),
-        supabase.from('licenses').select('id', { count: 'exact', head: true }).eq('status', 'ACTIVE').gte('created_at', monthStart),
-        supabase.from('licenses').select('id', { count: 'exact', head: true }).eq('status', 'ACTIVE').not('expires_at', 'is', null).lte('expires_at', in30),
-        supabase.from('licenses').select('id', { count: 'exact', head: true }).eq('status', 'PENDING'),
-        supabase.from('licenses').select('license_key, grade, status, email, created_at').order('created_at', { ascending: false }).limit(10),
+        scope(supabase.from('licenses').select('id', { count: 'exact', head: true }).eq('status', 'ACTIVE')),
+        scope(supabase.from('licenses').select('id', { count: 'exact', head: true }).eq('status', 'ACTIVE').gte('created_at', monthStart)),
+        scope(supabase.from('licenses').select('id', { count: 'exact', head: true }).eq('status', 'ACTIVE').not('expires_at', 'is', null).lte('expires_at', in30)),
+        scope(supabase.from('licenses').select('id', { count: 'exact', head: true }).eq('status', 'PENDING')),
+        scope(supabase.from('licenses').select('license_key, grade, status, email, created_at')).order('created_at', { ascending: false }).limit(10),
       ])
 
       setStats({
@@ -40,7 +44,7 @@ export default function Dashboard() {
       setLoading(false)
     }
     load()
-  }, [])
+  }, [productCode])
 
   if (loading) return <div style={styles.loading}>로딩 중...</div>
 

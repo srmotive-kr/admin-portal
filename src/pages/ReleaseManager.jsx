@@ -1,25 +1,27 @@
 import { useEffect, useState, useRef } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { useProduct } from '../lib/ProductContext'
 
 const BUCKET = 'releases'
 
 export default function ReleaseManager() {
+  const { products, productCode } = useProduct()
   const [releases, setReleases]   = useState([])
   const [loading, setLoading]     = useState(true)
   const [uploading, setUploading] = useState(false)
-  const [form, setForm]           = useState({ version: '', product_code: 'smart-hr-plus', notes: '', virustotal_url: '' })
+  const [form, setForm]           = useState({ version: '', product_code: productCode, notes: '', virustotal_url: '' })
   const [error, setError]         = useState('')
   const [success, setSuccess]     = useState('')
   const fileRef                   = useRef()
 
-  useEffect(() => { fetchReleases() }, [])
+  useEffect(() => { fetchReleases() }, [productCode])
+  useEffect(() => { setForm(f => ({ ...f, product_code: productCode })) }, [productCode])
 
   async function fetchReleases() {
     setLoading(true)
-    const { data } = await supabase
-      .from('releases')
-      .select('*')
-      .order('created_at', { ascending: false })
+    let q = supabase.from('releases').select('*')
+    if (productCode) q = q.eq('product_code', productCode)
+    const { data } = await q.order('created_at', { ascending: false })
     setReleases(data || [])
     setLoading(false)
   }
@@ -85,7 +87,9 @@ export default function ReleaseManager() {
           <div style={s.field}>
             <label style={s.label}>제품 코드</label>
             <select style={s.input} value={form.product_code} onChange={e => setForm(f => ({ ...f, product_code: e.target.value }))}>
-              <option value="smart-hr-plus">smart-hr-plus</option>
+              {products.map(p => (
+                <option key={p.code} value={p.code}>{p.display_name}</option>
+              ))}
             </select>
           </div>
           <div style={s.field}>

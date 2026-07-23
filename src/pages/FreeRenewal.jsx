@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { useProduct } from '../lib/ProductContext'
 
 const GRADE_OPTIONS = ['FREE', 'PRO', 'ENTERPRISE']
 
 export default function FreeRenewal() {
+  const { productCode } = useProduct()
   const [licenses, setLicenses] = useState([])
   const [loading, setLoading]   = useState(true)
   const [filter, setFilter]     = useState('all') // all | expiring | expired
@@ -11,7 +13,7 @@ export default function FreeRenewal() {
   const [saving, setSaving]     = useState(false)
   const [msg, setMsg]           = useState('')
 
-  useEffect(() => { fetchLicenses() }, [filter])
+  useEffect(() => { fetchLicenses() }, [filter, productCode])
 
   async function fetchLicenses() {
     setLoading(true)
@@ -20,6 +22,7 @@ export default function FreeRenewal() {
       .select('*')
       .eq('grade', 'FREE')
       .order('expires_at', { ascending: true, nullsFirst: false })
+    if (productCode) q = q.eq('product_code', productCode)
 
     const now   = new Date()
     const in30  = new Date(now); in30.setDate(in30.getDate() + 30)
