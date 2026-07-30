@@ -24,7 +24,10 @@ const CODE_GROUPS = [
   { code: 'EMP_TYPE',      label: '고용형태구분',   hasTaxable: false, hasOrdinary: false },
   { code: 'JOB',           label: '업무구분',       hasTaxable: false, hasOrdinary: false },
   { code: 'SALARY_TYPE',   label: '급여구분',       hasTaxable: false, hasOrdinary: false },
-  { code: 'ALLOWANCE',     label: '수당구분',       hasTaxable: true,  hasOrdinary: true  },
+  // attOptionalNames: 지급방식(정액/출근일기준)을 개별 급여정보 등록 시 사용자가 선택하는 수당.
+  // 통상임금 포함여부가 그 선택에 따라 동적으로 결정되므로, 이 seed 화면에서 ordinary_yn을
+  // 고정값으로 저장하면 안 됨(항상 'Y' 유지 — 실제 포함여부는 스마트HR+에서 att_based_yn으로 판정).
+  { code: 'ALLOWANCE',     label: '수당구분',       hasTaxable: true,  hasOrdinary: true, attOptionalNames: ['식대', '교통비'] },
   { code: 'BONUS_TYPE',    label: '상여금구분',     hasTaxable: false, hasOrdinary: false },
   { code: 'LEAVE_TYPE',    label: '휴가구분',       hasTaxable: true,  taxableLabel: '유급여부', hasOrdinary: false },
   { code: 'OUTING_TYPE',   label: '외출/조퇴구분',  hasTaxable: true,  taxableLabel: '유급여부', hasOrdinary: false },
@@ -172,6 +175,10 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
     if (!toSave.length) return
     setSaving(true); setMsg(null)
     for (const it of toSave) {
+      // 지급방식에 따라 통상임금 포함여부가 달라지는 수당(식대/교통비 등)은 여기서 고정값을
+      // 저장하면 안 되므로 항상 'Y'로 강제한다 — 실제 포함여부는 개별 급여정보 등록 시
+      // 사용자가 선택한 지급방식(att_based_yn)으로 스마트HR+에서 판정한다.
+      const isAttOptional = grp?.attOptionalNames?.includes((it.name || '').trim())
       const payload = {
         group_code:        it.group_code,
         code:              (it.code || '').toUpperCase().trim(),
@@ -179,7 +186,7 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
         sort_order:        it.sort_order,
         use_yn:            it.use_yn,
         taxable_yn:        it.taxable_yn,
-        ordinary_yn:       it.ordinary_yn,
+        ordinary_yn:       isAttOptional ? 'Y' : it.ordinary_yn,
         is_system_default: it.is_system_default || 0,
         is_settle_code:    it.is_settle_code    || 0,
       }
@@ -290,11 +297,12 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
                       </td>
                       {grp?.hasTaxable && (() => {
                         const isPaid = it.taxable_yn === 'Y'
+                        const isLeaveStyle = !!grp.taxableLabel // LEAVE_TYPE/OUTING_TYPE만 유급/무급, 그 외(ALLOWANCE 등)는 과세/비과세
                         return (
                           <td style={{ ...s.td, textAlign: 'center' }}>
                             {isSys ? (
                               <span style={{ fontSize: 13, color: isPaid ? '#16A34A' : '#94A3B8' }}>
-                                {isPaid ? '유급' : '무급'}
+                                {isLeaveStyle ? (isPaid ? '유급' : '무급') : (isPaid ? '과세' : '비과세')}
                               </span>
                             ) : (
                               <input type="checkbox" checked={isPaid}
@@ -305,9 +313,15 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
                       })()}
                       {grp?.hasOrdinary && (() => {
                         const isOrd = (it.ordinary_yn ?? 'Y') === 'Y'
+                        const isAttOptional = grp?.attOptionalNames?.includes((it.name || '').trim())
                         return (
                           <td style={{ ...s.td, textAlign: 'center' }}>
-                            {it.id !== null ? (
+                            {isAttOptional ? (
+                              <span title="개별 급여정보 등록 시 선택하는 지급방식(정액/출근일기준)에 따라 통상임금 포함여부가 자동 결정되므로 여기서 고정할 수 없습니다."
+                                style={{ fontSize: 11, color: '#94A3B8', fontStyle: 'italic', cursor: 'help' }}>
+                                지급방식에 따라 결정
+                              </span>
+                            ) : it.id !== null ? (
                               <span style={{
                                 display: 'inline-block', fontSize: 11, fontWeight: 600,
                                 padding: '2px 8px', borderRadius: 10,
