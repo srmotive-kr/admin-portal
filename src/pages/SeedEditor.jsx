@@ -366,6 +366,12 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
             </table>
           </div>
         )}
+
+        <div style={s.notice}>
+          시스템 코드: 100 미만{groupCode === 'ALLOWANCE' ? ' (그중 991~999는 정산전용 코드)' : ''} · 일반 코드: 100 이상 —
+          스마트HR+ 사용자 앱에서 등록하는 일반 코드도 항상 100 이상 번호를 쓰도록 강제되어 있어,
+          어드민 포탈에서 100 미만 번호로 등록·수정해도 사용자 앱의 코드와 겹칠 위험이 없습니다.
+        </div>
       </div>
     </div>
   )
@@ -1855,6 +1861,11 @@ const s = {
   alertOk:    { background: '#F0FDF4', border: '1px solid #BBF7D0', color: '#15803D' },
   alertError: { background: '#FEF2F2', border: '1px solid #FECACA', color: '#DC2626' },
   alertClose: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, lineHeight: 1, padding: '0 2px', color: 'inherit', opacity: 0.5, flexShrink: 0 },
+  notice: {
+    marginTop: 14, padding: '9px 14px', background: '#F8FAFC',
+    border: '1px solid #E2E8F0', borderRadius: 8,
+    fontSize: 12, color: '#64748B', lineHeight: 1.6,
+  },
 
   table: { width: '100%', borderCollapse: 'collapse', background: '#fff' },
   th: {
