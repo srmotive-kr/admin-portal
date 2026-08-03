@@ -2,6 +2,18 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabaseClient'
 
+// 시드 데이터 저장 성공 시 반드시 호출 — seed_sync_meta.last_updated_at을 직접 갱신한다.
+// DB 트리거가 모든 변경에 안정적으로 반응하지 않는 경우가 확인되어(예: 여러 차례 순서 변경
+// 저장 후에도 값이 갱신되지 않음), 트리거에만 의존하지 않고 저장 시점에 여기서 명시적으로
+// 찍어야 스마트HR+의 버전 비교(runSeedSync)가 실제 변경을 놓치지 않는다.
+async function touchSyncMeta() {
+  const { error } = await supabase
+    .from('seed_sync_meta')
+    .update({ last_updated_at: new Date().toISOString() })
+    .eq('id', 1)
+  if (error) console.error('[touchSyncMeta]', error.message)
+}
+
 // Excel 날짜(Date 객체 또는 시리얼 숫자) → 'YYYY-MM-DD' 문자열 변환
 function xlDateToStr(v) {
   if (v instanceof Date) {
@@ -165,6 +177,7 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
       if (!window.confirm('삭제하시겠습니까?')) return
       const { error } = await supabase.from('seed_codes').delete().eq('id', it.id)
       if (error) { setMsg({ type: 'error', text: error.message }); return }
+      await touchSyncMeta()
     }
     setItems(prev => prev.filter((_, i) => i !== idx))
     setDirty(true)
@@ -199,6 +212,7 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
         if (error) { setMsg({ type: 'error', text: error.message }); setSaving(false); return }
       }
     }
+    await touchSyncMeta()
     setMsg({ type: 'success', text: '저장 완료' })
     setSaving(false)
     load()
@@ -283,13 +297,11 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
                             {it.code}
                             <span style={s.sysBadge}>시스템</span>
                           </span>
-                        ) : it.id === null ? (
+                        ) : (
                           <input style={{ ...s.input, fontFamily: 'monospace', width: 80 }}
                             value={it.code}
                             onChange={e => change(idx, 'code', e.target.value.toUpperCase())}
                             placeholder="코드" maxLength={10} />
-                        ) : (
-                          <span style={s.codeTag}>{it.code || '자동'}</span>
                         )}
                       </td>
                       <td style={s.td}>
@@ -300,17 +312,10 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
                       </td>
                       {grp?.hasTaxable && (() => {
                         const isPaid = it.taxable_yn === 'Y'
-                        const isLeaveStyle = !!grp.taxableLabel // LEAVE_TYPE/OUTING_TYPE만 유급/무급, 그 외(ALLOWANCE 등)는 과세/비과세
                         return (
                           <td style={{ ...s.td, textAlign: 'center' }}>
-                            {isSys ? (
-                              <span style={{ fontSize: 13, color: isPaid ? '#16A34A' : '#94A3B8' }}>
-                                {isLeaveStyle ? (isPaid ? '유급' : '무급') : (isPaid ? '과세' : '비과세')}
-                              </span>
-                            ) : (
-                              <input type="checkbox" checked={isPaid}
-                                onChange={e => change(idx, 'taxable_yn', e.target.checked ? 'Y' : 'N')} />
-                            )}
+                            <input type="checkbox" checked={isPaid}
+                              onChange={e => change(idx, 'taxable_yn', e.target.checked ? 'Y' : 'N')} />
                           </td>
                         )
                       })()}
@@ -404,6 +409,7 @@ function InsuranceTab({ onDirtyChange }) {
       if (!window.confirm(`${it.year}년 보험요율을 삭제하시겠습니까?`)) return
       const { error } = await supabase.from('insurance_rates').delete().eq('id', it.id)
       if (error) { setMsg({ type: 'error', text: error.message }); return }
+      await touchSyncMeta()
     }
     setItems(prev => prev.filter((_, i) => i !== idx))
     setDirty(true)
@@ -423,6 +429,7 @@ function InsuranceTab({ onDirtyChange }) {
         if (error) { setMsg({ type: 'error', text: error.message }); setSaving(false); return }
       }
     }
+    await touchSyncMeta()
     setMsg({ type: 'success', text: '저장 완료' })
     setSaving(false); load()
   }
@@ -585,6 +592,7 @@ function SimpleTaxSection() {
     if (!window.confirm(`${applyFrom} 세액표 전체(${item?.count || 0}건)를 삭제하시겠습니까?`)) return
     const { error } = await supabase.from('income_tax_table').delete().eq('apply_from', applyFrom)
     if (error) { setMsg({ type: 'error', text: error.message }); return }
+    await touchSyncMeta()
     load()
   }
 
@@ -670,6 +678,7 @@ function SimpleTaxSection() {
       }
       const totalRows = [...rowsByAf.values()].reduce((s, a) => s + a.length, 0)
       const afs = [...rowsByAf.keys()].join(', ')
+      await touchSyncMeta()
       setMsg({ type: 'success', text: `${afs} 세액표 ${totalRows}건 업로드 완료` })
       load()
     } catch (err) {
@@ -815,6 +824,7 @@ function ExcessRateSection({ onDirtyChange }) {
       if (!window.confirm(`threshold_from=${Number(r.threshold_from).toLocaleString()} 행을 삭제하시겠습니까?`)) return
       const { error } = await supabase.from('income_tax_excess_rate').delete().eq('id', r.id)
       if (error) { setMsg({ type: 'error', text: error.message }); return }
+      await touchSyncMeta()
     }
     setRows(prev => prev.filter((_, i) => i !== idx)); setDirty(true)
   }
@@ -835,6 +845,7 @@ function ExcessRateSection({ onDirtyChange }) {
         : await supabase.from('income_tax_excess_rate').update(payload).eq('id', id)
       if (error) { setMsg({ type: 'error', text: error.message }); setSaving(false); return }
     }
+    await touchSyncMeta()
     setMsg({ type: 'success', text: `${toSave.length}건 저장 완료` })
     setSaving(false); load()
   }
@@ -893,6 +904,7 @@ function ExcessRateSection({ onDirtyChange }) {
         if (backup?.length) await supabase.from('income_tax_excess_rate').insert(backup)
         throw error
       }
+      await touchSyncMeta()
       setMsg({ type: 'success', text: `${afs.join(', ')} 초과세율표 ${parsed.length}건 업로드 완료` })
       load()
     } catch (err) {
@@ -1043,6 +1055,7 @@ function HolidayTab({ onDirtyChange }) {
       if (!window.confirm('삭제하시겠습니까?')) return
       const { error } = await supabase.from('holidays').delete().eq('id', it.id)
       if (error) { setMsg({ type: 'error', text: error.message }); return }
+      await touchSyncMeta()
     }
     setItems(prev => prev.filter((_, i) => i !== idx))
     setDirty(true)
@@ -1063,6 +1076,7 @@ function HolidayTab({ onDirtyChange }) {
         if (error) { setMsg({ type: 'error', text: error.message }); setSaving(false); return }
       }
     }
+    await touchSyncMeta()
     setMsg({ type: 'success', text: '저장 완료' })
     setSaving(false); load()
   }
@@ -1094,6 +1108,7 @@ function HolidayTab({ onDirtyChange }) {
       for (const yr of yrs) await supabase.from('holidays').delete().eq('year', yr)
       const { error } = await supabase.from('holidays').insert(rows)
       if (error) { setMsg({ type: 'error', text: error.message }); setUploading(false); e.target.value = ''; return }
+      await touchSyncMeta()
       setMsg({ type: 'success', text: `공휴일 ${rows.length}건 업로드 완료 (${yrs.join(', ')}년)` })
       load()
     } catch (err) {
@@ -1537,6 +1552,7 @@ function BulkUploadModal({ onClose }) {
           if (error) throw error
         }
       }
+      await touchSyncMeta()
       setProgress(''); setDone(true)
       setMsg({ type: 'success', text: '전체 업로드 완료!' })
     } catch (err) {
@@ -1661,6 +1677,7 @@ function LeaveRateTab({ onDirtyChange }) {
       if (!window.confirm(`${it.year}년 출산육아급여기준을 삭제하시겠습니까?`)) return
       const { error } = await supabase.from('gov_leave_benefit_rates').delete().eq('id', it.id)
       if (error) { setMsg({ type: 'error', text: error.message }); return }
+      await touchSyncMeta()
     }
     setItems(prev => prev.filter((_, i) => i !== idx))
     setDirty(true)
@@ -1680,6 +1697,7 @@ function LeaveRateTab({ onDirtyChange }) {
         if (error) { setMsg({ type: 'error', text: error.message }); setSaving(false); return }
       }
     }
+    await touchSyncMeta()
     setMsg({ type: 'success', text: '저장 완료' })
     setSaving(false); load()
   }

@@ -123,9 +123,15 @@ const SECTIONS = [
         timing: '매년 1월', who: 'dev', item: '최저임금 신규 연도 추가',
         detail: '고용노동부 고시(전년도 8월 확정) 확인 후 minimum_wage 테이블에 신규 연도 행 추가.',
         values: 'MINIMUM_WAGE_2024 = 9,860원\nMINIMUM_WAGE_2025 = 10,030원\nMINIMUM_WAGE_2026 = 10,320원',
-        warn: 'EmpSalary.jsx:237 fallback 하드코딩도 동기화 필요',
+        warn: 'EmpSalary.jsx:237 fallback 하드코딩도 동기화 필요 (관리방안 확정 후 경로 재확인 필요)',
         path: 'minimum_wage 테이블',
         src: 'src/db/patches/v1.35.0.sql:228',
+      },
+      {
+        timing: '매년 1월', who: 'user', item: '최저시급 적용 · 통상임금 재계산',
+        detail: '개발사가 신규 연도 최저임금을 반영한 뒤, 시급제 직원 중 급여정보의 "최저시급" 체크가 켜진 직원은 시급이 자동으로 새 금액으로 갱신되는지 확인. 월급/연봉제 직원도 통상시급이 새 최저임금에 미달하지 않는지 확인 후 필요 시 급여정보를 다시 열어 저장(현재 일괄 재계산 기능 없음 — 직원별로 열어서 재저장해야 캐시된 통상임금이 갱신됨).',
+        path: '채용정보 → 급여정보',
+        src: 'salary_info.converted_monthly/converted_hourly (저장 시점 캐시)',
       },
       {
         timing: '매년 1월', who: 'dev', item: '공휴일 신규 연도 등록',
@@ -133,9 +139,14 @@ const SECTIONS = [
         path: 'src/db/seeds/003_seed_holidays.sql',
         src: 'holidays 테이블 / HolidayManager 화면(조회)',
       },
+    ],
+  },
+  {
+    title: 'B. 매년 3월 (격년 개정 패턴) — 근로소득 간이세액표 확인',
+    rows: [
       {
-        timing: '매년 1월 (변경 시)', who: 'dev', item: '근로소득 간이세액표 업로드',
-        detail: '국세청 고시 변경 시 Admin Portal Seed 편집기 → [근로소득세액표] 탭에서 Excel 업로드. 시행일(apply_from) 기준 버전 관리.',
+        timing: '매년 3월 (격년 개정 확인)', who: 'dev', item: '근로소득 간이세액표 개정 확인 및 업로드',
+        detail: '최근 개정 이력을 보면 통상 격년으로 3월 1일 시행 개정판이 고시되는 패턴 — 매년 3월에 국세청 고시 변경 여부를 확인하고, 있으면 Admin Portal Seed 편집기 → [근로소득세액표] 탭에서 Excel 업로드. 시행일(apply_from) 기준 버전 관리.',
         values: '2024-01-01: 기존 세액표\n2026-03-01: 2026.02.27 개정, 자녀공제 조정 ✓ 업로드 완료',
         ok: '10,000,000원 초과 구간은 income_tax_excess_rate 테이블에서 동적 조회 (소스 수정 불필요)',
         path: 'Admin Portal → Seed 편집기 → 근로소득세액표',
@@ -144,7 +155,7 @@ const SECTIONS = [
     ],
   },
   {
-    title: 'B. 매년 4월 — 건강·고용보험 보수월액 정산',
+    title: 'C. 매년 4월 — 건강·고용보험 보수월액 정산',
     rows: [
       {
         timing: '매년 4월', who: 'user', item: '직원별 건강·고용보험 보수월액 업데이트',
@@ -160,7 +171,7 @@ const SECTIONS = [
     ],
   },
   {
-    title: 'C. 매년 7월 — 국민연금 기준소득월액 변경',
+    title: 'D. 매년 7월 — 국민연금 기준소득월액 변경',
     rows: [
       {
         timing: '매년 7월', who: 'dev', item: '국민연금 기준소득월액 상한·하한 갱신',
@@ -178,7 +189,7 @@ const SECTIONS = [
     ],
   },
   {
-    title: 'D. 연초 (1~2월) — 연말정산 및 연차 정산',
+    title: 'E. 연초 (1~2월) — 연말정산 및 연차 정산',
     rows: [
       {
         timing: '1~2월', who: 'user', item: '근로소득 연말정산 결과 입력',
@@ -198,7 +209,7 @@ const SECTIONS = [
     ],
   },
   {
-    title: 'E. 법령 개정 시 — 소스코드 수정이 필요한 항목',
+    title: 'F. 법령 개정 시 — 소스코드 수정이 필요한 항목',
     rows: [
       {
         timing: '소득세법 시행규칙', who: 'dev', item: '간이세액표 고소득 구간 초과세율',
