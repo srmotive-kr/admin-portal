@@ -259,7 +259,7 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
                     </th>
                   )}
                   {grp?.hasOrdinary && (
-                    <th style={{ ...s.th, width: 120, textAlign: 'center' }}>통상임금</th>
+                    <th style={{ ...s.th, width: 120, textAlign: 'center' }}>통상임금여부</th>
                   )}
                   {grp?.hasSettle && (
                     <th style={{ ...s.th, width: 80, textAlign: 'center' }}>정산코드</th>
@@ -324,30 +324,9 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
                                 style={{ fontSize: 11, color: '#94A3B8', fontStyle: 'italic', cursor: 'help' }}>
                                 지급방식에 따라 결정
                               </span>
-                            ) : isSys ? (
-                              <span style={{
-                                display: 'inline-block', fontSize: 11, fontWeight: 600,
-                                padding: '2px 8px', borderRadius: 10,
-                                background: isOrd ? '#E8F5E9' : '#FFF3E0',
-                                color:      isOrd ? '#2E7D32' : '#9E6700',
-                                border:     `1px solid ${isOrd ? '#C8E6C9' : '#FFCC80'}`,
-                              }}>
-                                {isOrd ? '통상포함' : '통상미포함'}
-                              </span>
                             ) : (
-                              <div style={{ display: 'flex', gap: 3, justifyContent: 'center' }}>
-                                {['Y', 'N'].map(v => (
-                                  <button key={v} style={{
-                                    padding: '2px 7px', fontSize: 10, fontWeight: 600,
-                                    border: '1px solid', borderRadius: 8, cursor: 'pointer',
-                                    background: (it.ordinary_yn ?? 'Y') === v ? (v === 'Y' ? '#2E7D32' : '#9E6700') : '#fff',
-                                    color:      (it.ordinary_yn ?? 'Y') === v ? '#fff' : '#94A3B8',
-                                    borderColor:(it.ordinary_yn ?? 'Y') === v ? (v === 'Y' ? '#2E7D32' : '#9E6700') : '#E2E8F0',
-                                  }} onClick={() => change(idx, 'ordinary_yn', v)}>
-                                    {v === 'Y' ? '통상포함' : '통상미포함'}
-                                  </button>
-                                ))}
-                              </div>
+                              <input type="checkbox" checked={isOrd}
+                                onChange={e => change(idx, 'ordinary_yn', e.target.checked ? 'Y' : 'N')} />
                             )}
                           </td>
                         )
