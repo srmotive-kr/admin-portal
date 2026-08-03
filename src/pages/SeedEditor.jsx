@@ -261,7 +261,7 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
                   {grp?.hasOrdinary && (
                     <th style={{ ...s.th, width: 120, textAlign: 'center' }}>통상임금</th>
                   )}
-                  <th style={{ ...s.th, width: 90, textAlign: 'center' }}>구분</th>
+                  <th style={{ ...s.th, width: 90, textAlign: 'center' }}>시스템여부</th>
                   <th style={{ ...s.th, width: 64, textAlign: 'center' }}>이동</th>
                   <th style={{ ...s.th, width: 56, textAlign: 'center' }}>삭제</th>
                 </tr>
@@ -350,11 +350,8 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
                         )
                       })()}
                       <td style={{ ...s.td, textAlign: 'center' }}>
-                        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer', fontSize: 11, fontWeight: 600, color: isSys ? '#B45309' : '#64748B' }}>
-                          <input type="checkbox" checked={isSys}
-                            onChange={e => handleToggleSystem(idx, e.target.checked)} />
-                          {isSys ? '시스템' : '일반'}
-                        </label>
+                        <input type="checkbox" checked={isSys}
+                          onChange={e => handleToggleSystem(idx, e.target.checked)} />
                       </td>
                       <td style={{ ...s.td, textAlign: 'center' }}>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'center' }}>
@@ -1154,7 +1151,7 @@ function HolidayTab({ onDirtyChange }) {
               <th style={s.th}>날짜</th>
               <th style={s.th}>공휴일명</th>
               <th style={{ ...s.th, width: 120 }}>유형</th>
-              <th style={{ ...s.th, width: 90, textAlign: 'center' }}>구분</th>
+              <th style={{ ...s.th, width: 90, textAlign: 'center' }}>시스템여부</th>
               <th style={{ ...s.th, width: 64, textAlign: 'center' }}>삭제</th>
             </tr>
           </thead>
@@ -1194,11 +1191,8 @@ function HolidayTab({ onDirtyChange }) {
                   )}
                 </td>
                 <td style={{ ...s.td, textAlign: 'center' }}>
-                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer', fontSize: 11, fontWeight: 600, color: isSys ? '#B45309' : '#64748B' }}>
-                    <input type="checkbox" checked={isSys}
-                      onChange={e => handleToggleSystem(idx, e.target.checked)} />
-                    {isSys ? '시스템' : '일반'}
-                  </label>
+                  <input type="checkbox" checked={isSys}
+                    onChange={e => handleToggleSystem(idx, e.target.checked)} />
                 </td>
                 <td style={{ ...s.td, textAlign: 'center' }}>
                   {isSys ? (
