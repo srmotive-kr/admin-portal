@@ -27,7 +27,7 @@ const CODE_GROUPS = [
   // attOptionalNames: 지급방식(정액/출근일기준)을 개별 급여정보 등록 시 사용자가 선택하는 수당.
   // 통상임금 포함여부가 그 선택에 따라 동적으로 결정되므로, 이 seed 화면에서 ordinary_yn을
   // 고정값으로 저장하면 안 됨(항상 'Y' 유지 — 실제 포함여부는 스마트HR+에서 att_based_yn으로 판정).
-  { code: 'ALLOWANCE',     label: '수당구분',       hasTaxable: true,  hasOrdinary: true, attOptionalNames: ['식대', '교통비'] },
+  { code: 'ALLOWANCE',     label: '수당구분',       hasTaxable: true,  hasOrdinary: true, hasSettle: true, attOptionalNames: ['식대', '교통비'] },
   { code: 'BONUS_TYPE',    label: '상여금구분',     hasTaxable: false, hasOrdinary: false },
   { code: 'LEAVE_TYPE',    label: '휴가구분',       hasTaxable: true,  taxableLabel: '유급여부', hasOrdinary: false },
   { code: 'OUTING_TYPE',   label: '외출/조퇴구분',  hasTaxable: true,  taxableLabel: '유급여부', hasOrdinary: false },
@@ -261,6 +261,9 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
                   {grp?.hasOrdinary && (
                     <th style={{ ...s.th, width: 120, textAlign: 'center' }}>통상임금</th>
                   )}
+                  {grp?.hasSettle && (
+                    <th style={{ ...s.th, width: 80, textAlign: 'center' }}>정산코드</th>
+                  )}
                   <th style={{ ...s.th, width: 90, textAlign: 'center' }}>시스템여부</th>
                   <th style={{ ...s.th, width: 64, textAlign: 'center' }}>이동</th>
                   <th style={{ ...s.th, width: 56, textAlign: 'center' }}>삭제</th>
@@ -321,7 +324,7 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
                                 style={{ fontSize: 11, color: '#94A3B8', fontStyle: 'italic', cursor: 'help' }}>
                                 지급방식에 따라 결정
                               </span>
-                            ) : it.id !== null ? (
+                            ) : isSys ? (
                               <span style={{
                                 display: 'inline-block', fontSize: 11, fontWeight: 600,
                                 padding: '2px 8px', borderRadius: 10,
@@ -349,6 +352,12 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
                           </td>
                         )
                       })()}
+                      {grp?.hasSettle && (
+                        <td style={{ ...s.td, textAlign: 'center' }} title="정산업무(연월차·보상휴가·건강고용보험·급여소급·교대근무 등)에서 확정 시에만 시스템이 자동 주입하는 코드인지 여부 — 켜면 급여정보 화면의 상시 수당 목록에서 숨겨집니다.">
+                          <input type="checkbox" checked={!!it.is_settle_code}
+                            onChange={e => change(idx, 'is_settle_code', e.target.checked ? 1 : 0)} />
+                        </td>
+                      )}
                       <td style={{ ...s.td, textAlign: 'center' }}>
                         <input type="checkbox" checked={isSys}
                           onChange={e => handleToggleSystem(idx, e.target.checked)} />
