@@ -121,11 +121,10 @@ const SECTIONS = [
       },
       {
         timing: '매년 1월', who: 'dev', item: '최저임금 신규 연도 추가',
-        detail: '고용노동부 고시(전년도 8월 확정) 확인 후 minimum_wage 테이블에 신규 연도 행 추가.',
+        detail: '고용노동부 고시(전년도 8월 확정) 확인 후 Admin Portal Seed 편집기 → [최저임금] 탭에서 신규 적용시작일 행 추가. 씨드 동기화 시 자동 반영되며, 사용자 앱 로그인 시 최저시급 자동연동 대상 직원은 자동으로 급여정보가 갱신된다(개별 SQL 패치 불필요).',
         values: 'MINIMUM_WAGE_2024 = 9,860원\nMINIMUM_WAGE_2025 = 10,030원\nMINIMUM_WAGE_2026 = 10,320원',
-        warn: 'EmpSalary.jsx:237 fallback 하드코딩도 동기화 필요 (관리방안 확정 후 경로 재확인 필요)',
-        path: 'minimum_wage 테이블',
-        src: 'src/db/patches/v1.35.0.sql:228',
+        path: 'Admin Portal → Seed 편집기 → 최저임금',
+        src: 'minimum_wage 테이블',
       },
       {
         timing: '매년 1월', who: 'user', item: '최저시급 적용 · 통상임금 재계산',

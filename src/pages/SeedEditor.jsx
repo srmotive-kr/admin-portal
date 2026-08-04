@@ -48,7 +48,7 @@ const CODE_GROUPS = [
   { code: 'SEVERANCE_TYPE',label: '퇴직금구분',     hasTaxable: false, hasOrdinary: false },
 ]
 
-const MAIN_TABS = ['코드', '보험요율', '근로소득세액표', '공휴일', '출산육아급여']
+const MAIN_TABS = ['코드', '보험요율', '최저임금', '근로소득세액표', '공휴일', '출산육아급여']
 
 // ─── 보험요율 컬럼 정의 ─────────────────────────────────────────────────────
 const INS_COLS = [
@@ -99,6 +99,7 @@ export default function SeedEditor() {
         <CodeTab groupCode={groupCode} onGroupChange={setGroupCode} onDirtyChange={v => { dirtyRef.current = v }} />
       )}
       {mainTab === '보험요율'      && <InsuranceTab onDirtyChange={v => { dirtyRef.current = v }} />}
+      {mainTab === '최저임금'      && <MinimumWageTab onDirtyChange={v => { dirtyRef.current = v }} />}
       {mainTab === '근로소득세액표' && <TaxTab onDirtyChange={v => { dirtyRef.current = v }} />}
       {mainTab === '공휴일'        && <HolidayTab onDirtyChange={v => { dirtyRef.current = v }} />}
       {mainTab === '출산육아급여' && <LeaveRateTab onDirtyChange={v => { dirtyRef.current = v }} />}
@@ -159,14 +160,8 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
     setItems(reordered); setDirty(true)
   }
 
+  // 시스템여부는 신규(미저장) 행에서만 지정 가능 — 저장된 행은 이후 전환 불가(읽기전용 배지로 표시).
   const handleToggleSystem = (idx, makeSystem) => {
-    const it = items[idx]
-    if (!makeSystem && it.is_system_default) {
-      const ok = window.confirm(
-        '이 코드를 일반코드로 변경하면 시스템에 영향을 미칠 수 있습니다.\n계속하시겠습니까?'
-      )
-      if (!ok) return
-    }
     change(idx, 'is_system_default', makeSystem ? 1 : 0)
   }
 
@@ -186,6 +181,17 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
   const handleSave = async () => {
     const toSave = items.filter(it => it._dirty)
     if (!toSave.length) return
+    // 신규 시스템코드는 설명·사용처 입력이 필수 — 로컬 앱의 충돌감지 팝업에서 사용자에게
+    // 이 코드가 무엇인지 보여줄 근거 정보이므로 비어있으면 저장을 차단한다.
+    const missingInfo = toSave.filter(it =>
+      it.id === null && it.is_system_default &&
+      (!(it.description || '').trim() || !(it.usage_location || '').trim())
+    )
+    if (missingInfo.length) {
+      const names = missingInfo.map(it => `"${it.name || '(미입력)'}"`).join(', ')
+      setMsg({ type: 'error', text: `시스템코드는 설명·사용처를 반드시 입력해야 합니다: ${names}` })
+      return
+    }
     setSaving(true); setMsg(null)
     for (const it of toSave) {
       // 지급방식에 따라 통상임금 포함여부가 달라지는 수당(식대/교통비 등)은 여기서 고정값을
@@ -202,6 +208,9 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
         ordinary_yn:       isAttOptional ? 'Y' : it.ordinary_yn,
         is_system_default: it.is_system_default || 0,
         is_settle_code:    it.is_settle_code    || 0,
+        description:       (it.description || '').trim() || null,
+        usage_location:    (it.usage_location || '').trim() || null,
+        synonyms:           (it.synonyms || '').trim() || null,
       }
       if (!payload.name) continue
       if (it.id === null) {
@@ -267,6 +276,9 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
                   <th style={{ ...s.th, width: 48, textAlign: 'center' }}>순서</th>
                   <th style={{ ...s.th, width: 100 }}>코드</th>
                   <th style={s.th}>코드명</th>
+                  <th style={{ ...s.th, width: 170 }}>설명</th>
+                  <th style={{ ...s.th, width: 170 }}>사용처</th>
+                  <th style={{ ...s.th, width: 140 }}>유사어</th>
                   {grp?.hasTaxable && (
                     <th style={{ ...s.th, width: 80, textAlign: 'center' }}>
                       {grp.taxableLabel || '과세여부'}
@@ -285,7 +297,7 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
               </thead>
               <tbody>
                 {items.length === 0 ? (
-                  <tr><td colSpan={10} style={s.empty}>등록된 데이터가 없습니다.</td></tr>
+                  <tr><td colSpan={13} style={s.empty}>등록된 데이터가 없습니다.</td></tr>
                 ) : items.map((it, idx) => {
                   const isSys = !!it.is_system_default
                   return (
@@ -309,6 +321,33 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
                           value={it.name}
                           onChange={e => change(idx, 'name', e.target.value)}
                           placeholder="코드명 입력" />
+                      </td>
+                      <td style={s.td}>
+                        {(it.id === null && isSys) ? (
+                          <input style={s.input} value={it.description || ''}
+                            onChange={e => change(idx, 'description', e.target.value)}
+                            placeholder="이 코드의 용도 (필수)" />
+                        ) : (
+                          <span style={{ fontSize: 12, color: '#7A88AA' }}>{it.description || '-'}</span>
+                        )}
+                      </td>
+                      <td style={s.td}>
+                        {(it.id === null && isSys) ? (
+                          <input style={s.input} value={it.usage_location || ''}
+                            onChange={e => change(idx, 'usage_location', e.target.value)}
+                            placeholder="사용 화면/기능 (필수)" />
+                        ) : (
+                          <span style={{ fontSize: 12, color: '#7A88AA' }}>{it.usage_location || '-'}</span>
+                        )}
+                      </td>
+                      <td style={s.td}>
+                        {(it.id === null && isSys) ? (
+                          <input style={s.input} value={it.synonyms || ''}
+                            onChange={e => change(idx, 'synonyms', e.target.value)}
+                            placeholder="유사어(쉼표구분, 선택)" />
+                        ) : (
+                          <span style={{ fontSize: 12, color: '#7A88AA' }}>{it.synonyms || '-'}</span>
+                        )}
                       </td>
                       {grp?.hasTaxable && (() => {
                         const isPaid = it.taxable_yn === 'Y'
@@ -343,8 +382,14 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
                         </td>
                       )}
                       <td style={{ ...s.td, textAlign: 'center' }}>
-                        <input type="checkbox" checked={isSys}
-                          onChange={e => handleToggleSystem(idx, e.target.checked)} />
+                        {it.id === null ? (
+                          <input type="checkbox" checked={isSys}
+                            onChange={e => handleToggleSystem(idx, e.target.checked)} />
+                        ) : (
+                          <span style={{ fontSize: 11, fontWeight: 600, color: isSys ? '#B45309' : '#94A3B8' }}>
+                            {isSys ? '시스템' : '일반'}
+                          </span>
+                        )}
                       </td>
                       <td style={{ ...s.td, textAlign: 'center' }}>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'center' }}>
@@ -534,6 +579,127 @@ function InsuranceTab({ onDirtyChange }) {
               ))}
               {items.length === 0 && (
                 <tr><td colSpan={11} style={s.empty}>등록된 보험요율이 없습니다.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── 최저임금 탭 ──────────────────────────────────────────────────────────────
+function MinimumWageTab({ onDirtyChange }) {
+  const [items, setItems]     = useState([])
+  const [dirty, setDirty]     = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving]   = useState(false)
+  const [msg, setMsg]         = useState(null)
+
+  const load = async () => {
+    setLoading(true); setMsg(null)
+    const { data, error } = await supabase.from('minimum_wage').select('*').order('effective_from', { ascending: false })
+    if (error) { setMsg({ type: 'error', text: error.message }); setLoading(false); return }
+    setItems(data || []); setDirty(false); setLoading(false)
+  }
+  useEffect(() => { load() }, [])
+  useEffect(() => { onDirtyChange?.(dirty) }, [dirty])
+
+  const change = (idx, key, val) => {
+    setItems(prev => prev.map((it, i) => i === idx ? { ...it, [key]: val, _dirty: true } : it))
+    setDirty(true)
+  }
+
+  const handleAdd = () => {
+    setItems(prev => [...prev, {
+      id: null, effective_from: `${new Date().getFullYear() + 1}-01-01`,
+      amount: 0, memo: '', _dirty: true,
+    }])
+    setDirty(true)
+  }
+
+  const handleDelete = async (idx) => {
+    const it = items[idx]
+    if (it.id !== null) {
+      if (!window.confirm(`${it.effective_from} 최저임금을 삭제하시겠습니까?`)) return
+      const { error } = await supabase.from('minimum_wage').delete().eq('id', it.id)
+      if (error) { setMsg({ type: 'error', text: error.message }); return }
+      await touchSyncMeta()
+    }
+    setItems(prev => prev.filter((_, i) => i !== idx))
+    setDirty(true)
+  }
+
+  const handleSave = async () => {
+    const toSave = items.filter(it => it._dirty)
+    if (!toSave.length) return
+    setSaving(true); setMsg(null)
+    for (const it of toSave) {
+      const { _dirty, id, ...payload } = it
+      if (id === null) {
+        const { error } = await supabase.from('minimum_wage').insert(payload)
+        if (error) { setMsg({ type: 'error', text: error.message }); setSaving(false); return }
+      } else {
+        const { error } = await supabase.from('minimum_wage').update(payload).eq('id', id)
+        if (error) { setMsg({ type: 'error', text: error.message }); setSaving(false); return }
+      }
+    }
+    await touchSyncMeta()
+    setMsg({ type: 'success', text: '저장 완료' })
+    setSaving(false); load()
+  }
+
+  return (
+    <div style={s.card}>
+      <div style={s.toolbar}>
+        <span style={s.cnt}>
+          총 <strong style={{ color: '#2563EB' }}>{items.length}</strong>건
+          {dirty && <span style={{ color: '#DC2626', marginLeft: 8 }}>● 미저장</span>}
+        </span>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button style={s.btn('ghost')} onClick={load} disabled={saving}>↺ 새로고침</button>
+          <button style={s.btn('success')} onClick={handleAdd} disabled={saving}>+ 연도 추가</button>
+          <button style={s.btn('primary')} onClick={handleSave} disabled={saving || !dirty}>
+            {saving ? '저장 중…' : '💾 저장'}
+          </button>
+        </div>
+      </div>
+      {msg && <div style={{ ...s.alert, ...(msg.type === 'error' ? s.alertError : s.alertOk), display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}><span>{msg.text}</span><button onClick={() => setMsg(null)} style={s.alertClose}>×</button></div>}
+      {loading ? <div style={s.empty}>로딩 중…</div> : (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={s.table}>
+            <thead>
+              <tr>
+                <th style={{ ...s.th, width: 140 }}>적용시작일</th>
+                <th style={{ ...s.th, width: 140, textAlign: 'right' }}>시급(원)</th>
+                <th style={s.th}>비고</th>
+                <th style={{ ...s.th, width: 64, textAlign: 'center' }}>삭제</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((it, idx) => (
+                <tr key={idx} style={{ background: it._dirty ? 'rgba(37,99,235,.03)' : 'transparent', borderBottom: '1px solid #F1F5F9' }}>
+                  <td style={s.td}>
+                    <input style={s.input} type="date" value={it.effective_from}
+                      onChange={e => change(idx, 'effective_from', e.target.value)} />
+                  </td>
+                  <td style={{ ...s.td, textAlign: 'right' }}>
+                    <input style={{ ...s.input, textAlign: 'right' }}
+                      type="number" value={it.amount}
+                      onChange={e => change(idx, 'amount', Number(e.target.value))} />
+                  </td>
+                  <td style={s.td}>
+                    <input style={s.input} value={it.memo || ''}
+                      onChange={e => change(idx, 'memo', e.target.value)}
+                      placeholder="비고" />
+                  </td>
+                  <td style={{ ...s.td, textAlign: 'center' }}>
+                    <button style={s.btnDel} onClick={() => handleDelete(idx)}>삭제</button>
+                  </td>
+                </tr>
+              ))}
+              {items.length === 0 && (
+                <tr><td colSpan={4} style={s.empty}>등록된 최저임금이 없습니다.</td></tr>
               )}
             </tbody>
           </table>
