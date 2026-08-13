@@ -6,6 +6,7 @@ import Login from './pages/Login'
 import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
 import LicenseManager from './pages/LicenseManager'
+import EmailHistory from './pages/EmailHistory'
 import ReleaseManager from './pages/ReleaseManager'
 import FreeRenewal from './pages/FreeRenewal'
 import SeedEditor from './pages/SeedEditor'
@@ -42,6 +43,7 @@ export default function App() {
                 <Routes>
                   <Route path="/" element={<Dashboard />} />
                   <Route path="/licenses" element={<LicenseManager />} />
+                  <Route path="/email-history" element={<EmailHistory />} />
                   <Route path="/releases" element={<ReleaseManager />} />
                   <Route path="/renewals" element={<FreeRenewal />} />
                   <Route path="/seed" element={<SeedEditor />} />

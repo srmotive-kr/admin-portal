@@ -266,6 +266,37 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
           </div>
         )}
 
+        {groupCode === 'ALLOWANCE' && (
+          <div style={s.helpBox}>
+            <div style={s.helpTitle}>ℹ️ 설명 · 사용처 · 유사어는 왜 입력하나요?</div>
+            <p style={s.helpP}>
+              이 화면에서 추가하는 <strong>시스템 코드</strong>는 스마트HR+를 쓰는 모든 고객사에
+              그대로 배포됩니다. 그런데 고객사가 이미 자기 회사만의 "일반 코드"로 비슷한 수당을
+              직접 만들어 쓰고 있을 수 있습니다(예: 시스템에 "식대"를 새로 추가했는데, 어느
+              고객사는 이미 "식비"라는 이름으로 같은 걸 운영 중인 경우). 이걸 그대로 두면
+              사실상 같은 수당이 코드 두 개로 쪼개져 통계·통상임금 계산이 어긋납니다.
+            </p>
+            <ul style={s.helpUl}>
+              <li><strong>유사어</strong> — 이 코드의 다른 이름들을 쉼표로 구분해 적습니다(예:
+                "식대"의 유사어로 <code>식비, 밥값</code>). 사용자 앱이 새 시스템코드를 받을 때
+                이름 또는 유사어가 고객사의 기존 일반 코드와 겹치는지 자동으로 검사해서(완전
+                일치·부분포함만 인식 — 오타 같은 애매한 유사 매칭은 하지 않음) "이거 같은
+                건가요?" 병합 확인 팝업을 띄우는 데 씁니다. 비워두면 이름이 정확히 같을 때만
+                감지됩니다.</li>
+              <li><strong>설명 / 사용처</strong> — 그 병합 확인 팝업에 그대로 표시되는 문구입니다.
+                고객사 담당자가 "이 시스템 코드가 뭐 하는 건지" 판단할 근거이므로, 실제
+                화면·기능 이름을 적어야 합니다(예: 설명 "식사 제공을 대신하는 정액 수당",
+                사용처 "급여정보 » 수당 등록").</li>
+            </ul>
+            <p style={{ ...s.helpP, marginBottom: 0 }}>
+              세 필드 모두 <strong>신규 시스템 코드를 추가할 때만</strong> 입력할 수 있고(체크박스로
+              "시스템"을 켠 새 행), 저장 후에는 수정할 수 없습니다 — 이미 배포된 코드의 뜻이
+              나중에 바뀌면 과거에 병합 판단을 내린 근거 자체가 달라지기 때문입니다. 일반
+              코드에는 해당하지 않습니다.
+            </p>
+          </div>
+        )}
+
         {loading ? (
           <div style={s.empty}>로딩 중…</div>
         ) : (
@@ -2032,6 +2063,14 @@ const s = {
     border: '1px solid #E2E8F0', borderRadius: 8,
     fontSize: 12, color: '#64748B', lineHeight: 1.6,
   },
+  helpBox: {
+    marginBottom: 14, padding: '14px 16px', background: '#EFF6FF',
+    border: '1px solid #BFDBFE', borderRadius: 10,
+    fontSize: 13, color: '#334155', lineHeight: 1.65,
+  },
+  helpTitle: { fontSize: 13, fontWeight: 700, color: '#1D4ED8', marginBottom: 8 },
+  helpP: { margin: '0 0 8px' },
+  helpUl: { margin: '0 0 8px', paddingLeft: 20, display: 'flex', flexDirection: 'column', gap: 6 },
 
   table: { width: '100%', borderCollapse: 'collapse', background: '#fff' },
   th: {

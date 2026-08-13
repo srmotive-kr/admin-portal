@@ -5,6 +5,7 @@ import { useProduct } from '../lib/ProductContext'
 const NAV = [
   { to: '/', label: '대시보드', icon: '◈' },
   { to: '/licenses', label: '라이선스 관리', icon: '🔑' },
+  { to: '/email-history', label: '이메일 발송 이력', icon: '📧' },
   { to: '/releases', label: '릴리즈 관리', icon: '📦' },
   { to: '/renewals', label: 'FREE 갱신 관리', icon: '♻️' },
   { to: '/seed', label: 'Seed 편집기', icon: '🗄️', productOnly: 'smart-hr-plus' },

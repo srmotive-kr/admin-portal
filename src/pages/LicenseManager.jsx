@@ -28,6 +28,24 @@ function fmt(iso) {
   return new Date(iso).toLocaleDateString('ko-KR', { year: '2-digit', month: '2-digit', day: '2-digit' })
 }
 
+// 만료일까지 남은 일수 — 시각은 무시하고 날짜 단위로만 비교(send-expiry-reminders와 동일 규칙)
+function dDayFor(expiresAt) {
+  const now = new Date()
+  const expire = new Date(expiresAt)
+  const nowUTC = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())
+  const expUTC = Date.UTC(expire.getFullYear(), expire.getMonth(), expire.getDate())
+  return Math.round((expUTC - nowUTC) / 86400000)
+}
+
+const SEND_DELAY_MS = 500 // Resend 요청 간 지연 — 스팸/rate limit 방지
+const EXTEND_MONTHS_OPTIONS = [1, 3, 6, 12]
+
+function addMonths(dateStr, months) {
+  const d = new Date(dateStr)
+  d.setMonth(d.getMonth() + months)
+  return d.toISOString().slice(0, 10)
+}
+
 export default function LicenseManager() {
   const { productCode } = useProduct()
   const [rows, setRows] = useState([])
@@ -38,6 +56,14 @@ export default function LicenseManager() {
   const [showIssueModal, setShowIssueModal] = useState(false)
   const [filter, setFilter] = useState({ q: '', grade: '', status: '', channel: '' })
   const [page, setPage] = useState(0)
+  const [dateField, setDateField] = useState('created_at') // created_at(발급일) | expires_at(만료일) — 입력 중인 값
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+  const [dateApplied, setDateApplied] = useState(null) // null | { field, from, to } — 조회 버튼을 눌러야 반영됨
+  const [bulkSending, setBulkSending] = useState(false)
+  const [bulkProgress, setBulkProgress] = useState(null) // null | { done, total }
+  const [bulkResult, setBulkResult] = useState(null) // null | { success, failed, skipped, failMsgs }
+  const [showExtendModal, setShowExtendModal] = useState(false)
   const PAGE = 20
 
   async function load() {
@@ -49,6 +75,8 @@ export default function LicenseManager() {
     if (filter.grade) q = q.eq('grade', filter.grade)
     if (filter.status) q = q.eq('status', filter.status)
     if (filter.channel) q = q.eq('channel', filter.channel)
+    if (dateApplied?.from) q = q.gte(dateApplied.field, `${dateApplied.from}T00:00:00`)
+    if (dateApplied?.to) q = q.lte(dateApplied.field, `${dateApplied.to}T23:59:59`)
     q = q.order('created_at', { ascending: false }).range(page * PAGE, (page + 1) * PAGE - 1)
     const { data, count, error } = await q
     if (error) setLoadError(`데이터 조회 실패: ${error.message}`)
@@ -57,13 +85,68 @@ export default function LicenseManager() {
     setLoading(false)
   }
 
-  useEffect(() => { load() }, [filter, page, productCode])
+  useEffect(() => { load() }, [filter, page, productCode, dateApplied])
+
+  function handleDateSearch() {
+    setPage(0)
+    setDateApplied({ field: dateField, from: dateFrom, to: dateTo })
+  }
 
   function handleCheck(id) {
     setRows(r => r.map(x => x.id === id ? { ...x, _checked: !x._checked } : x))
   }
 
   const checked = rows.filter(r => r._checked)
+
+  async function sendBulkExpiryReminders() {
+    const targets = checked.filter(r => r.email && r.expires_at && dDayFor(r.expires_at) >= 0)
+    const skipped = checked.length - targets.length
+    if (targets.length === 0) {
+      setBulkResult({ success: 0, failed: 0, skipped, failMsgs: [] })
+      return
+    }
+
+    setBulkSending(true)
+    setBulkResult(null)
+    setBulkProgress({ done: 0, total: targets.length })
+
+    let success = 0
+    const failMsgs = []
+
+    for (const row of targets) {
+      const days_left = dDayFor(row.expires_at)
+      try {
+        const { error } = await supabase.functions.invoke('send-license-email', {
+          body: {
+            license_key: row.license_key,
+            email: row.email,
+            grade: row.grade,
+            type: 'expiry_reminder',
+            days_left,
+            expires_at: row.expires_at.slice(0, 10),
+            product_code: row.product_code,
+          },
+        })
+        if (error) throw error
+        const notified = row.expiry_notified_days || []
+        await supabase.from('licenses').update({
+          expiry_notified_days: [...notified, days_left],
+          updated_at: new Date().toISOString(),
+        }).eq('id', row.id)
+        success++
+      } catch (e) {
+        failMsgs.push(`${row.email} (${row.license_key}): ${e.message}`)
+      }
+      setBulkProgress(p => ({ ...p, done: p.done + 1 }))
+      await new Promise(r => setTimeout(r, SEND_DELAY_MS))
+    }
+
+    setBulkSending(false)
+    setBulkProgress(null)
+    setBulkResult({ success, failed: failMsgs.length, skipped, failMsgs })
+    setRows(r => r.map(x => ({ ...x, _checked: false })))
+    load()
+  }
 
   return (
     <div>
@@ -92,13 +175,48 @@ export default function LicenseManager() {
           <option value="">채널 전체</option>
           {CHANNELS.filter(Boolean).map(c => <option key={c} value={c}>채널 {c}</option>)}
         </select>
+        <select value={dateField} onChange={e => setDateField(e.target.value)} style={styles.select}>
+          <option value="created_at">발급일</option>
+          <option value="expires_at">만료일</option>
+        </select>
+        <div style={styles.dateRange}>
+          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={styles.dateInput} />
+          <span style={{ color: 'var(--gray-400)', fontSize: 12 }}>~</span>
+          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} style={styles.dateInput} />
+        </div>
+        <button onClick={handleDateSearch} style={styles.searchBtn}>조회</button>
       </div>
 
       {checked.length > 0 && (
         <div style={styles.bulkBar}>
           {checked.length}건 선택됨
-          <button style={styles.btnSm}>이메일 발송</button>
-          <button style={styles.btnSm}>만료일 연장</button>
+          <button style={styles.btnSm} onClick={sendBulkExpiryReminders} disabled={bulkSending}>
+            {bulkSending ? `발송 중... (${bulkProgress?.done ?? 0}/${bulkProgress?.total ?? 0}건)` : '만료 안내 이메일 발송'}
+          </button>
+          <button style={styles.btnSm} onClick={() => setShowExtendModal(true)}>만료일 연장</button>
+        </div>
+      )}
+
+      {bulkResult && (
+        <div style={{
+          background: bulkResult.failed > 0 ? 'var(--yellow-100)' : 'var(--green-100)',
+          borderRadius: 10, padding: '10px 16px', marginBottom: 12, fontSize: 13,
+        }}>
+          <div style={{ fontWeight: 700, marginBottom: bulkResult.failMsgs.length > 0 ? 6 : 0 }}>
+            발송 완료 — 성공 {bulkResult.success}건, 실패 {bulkResult.failed}건
+            {bulkResult.skipped > 0 && `, 이메일·만료일 미등록 또는 이미 만료된 건 ${bulkResult.skipped}건 제외`}
+          </div>
+          {bulkResult.failMsgs.length > 0 && (
+            <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: 'var(--gray-700)' }}>
+              {bulkResult.failMsgs.map((m, i) => <li key={i}>{m}</li>)}
+            </ul>
+          )}
+          <button
+            onClick={() => setBulkResult(null)}
+            style={{ ...styles.btnSm, marginTop: 8, fontSize: 11, padding: '2px 10px' }}
+          >
+            닫기
+          </button>
         </div>
       )}
 
@@ -119,6 +237,7 @@ export default function LicenseManager() {
           <span style={{ flex: 3 }}>이메일</span>
           <span style={{ flex: 1 }}>채널</span>
           <span style={{ flex: 1, textAlign: 'center' }}>설치</span>
+          <span style={{ flex: 2 }}>발급일</span>
           <span style={{ flex: 2 }}>만료일</span>
           <span style={{ flex: 1 }}>상태</span>
         </div>
@@ -141,6 +260,7 @@ export default function LicenseManager() {
                 <span style={{ flex: 1, textAlign: 'center', fontSize: 12, color: row.hw_ids?.length > 0 ? 'var(--blue-700)' : 'var(--gray-300)' }}>
                   {row.hw_ids?.length > 0 ? `${row.hw_ids.length}대` : '—'}
                 </span>
+                <span style={{ flex: 2, color: 'var(--gray-600)' }}>{fmt(row.created_at)}</span>
                 <span style={{ flex: 2, color: 'var(--gray-600)' }}>{fmt(row.expires_at)}</span>
                 <span style={{ flex: 1 }}><StatusBadge status={row.status} /></span>
               </div>
@@ -159,6 +279,102 @@ export default function LicenseManager() {
 
       {selected && <DetailPanel row={selected} onClose={() => setSelected(null)} onRefresh={load} />}
       {showIssueModal && <IssueModal onClose={() => setShowIssueModal(false)} onRefresh={load} />}
+      {showExtendModal && (
+        <ExtendExpiryModal
+          targets={checked}
+          onClose={() => setShowExtendModal(false)}
+          onDone={() => { setShowExtendModal(false); setRows(r => r.map(x => ({ ...x, _checked: false }))); load() }}
+        />
+      )}
+    </div>
+  )
+}
+
+function ExtendExpiryModal({ targets, onClose, onDone }) {
+  const [months, setMonths] = useState(null)
+  const [extending, setExtending] = useState(false)
+  const [result, setResult] = useState(null)
+
+  const applicable = targets.filter(r => r.expires_at)
+  const skipped = targets.length - applicable.length
+
+  async function run() {
+    if (!months) return
+    setExtending(true)
+    let success = 0
+    const failMsgs = []
+    for (const row of applicable) {
+      const update = {
+        expires_at: addMonths(row.expires_at, months),
+        expiry_notified_days: [], // 새 만료 주기이므로 이전 D-30/7/1 발송 기록 초기화
+        updated_at: new Date().toISOString(),
+      }
+      if (row.status === 'EXPIRED') update.status = 'ACTIVE'
+      const { error } = await supabase.from('licenses').update(update).eq('id', row.id)
+      if (error) failMsgs.push(`${row.license_key}: ${error.message}`)
+      else success++
+    }
+    setExtending(false)
+    setResult({ success, failed: failMsgs.length, failMsgs })
+  }
+
+  return (
+    <div style={styles.overlay} onClick={onClose}>
+      <div style={{ ...styles.panel, width: 420, height: 'auto', borderRadius: 14 }} onClick={e => e.stopPropagation()}>
+        <div style={styles.panelHeader}>
+          <h3 style={{ fontSize: 15, fontWeight: 700 }}>만료일 연장</h3>
+          <button onClick={result ? onDone : onClose} style={styles.closeBtn}>✕</button>
+        </div>
+        <div style={styles.panelBody}>
+          {result ? (
+            <>
+              <div style={{
+                background: result.failed > 0 ? 'var(--yellow-100)' : 'var(--green-100)',
+                borderRadius: 10, padding: '10px 16px', fontSize: 13,
+              }}>
+                <div style={{ fontWeight: 700, marginBottom: result.failMsgs.length > 0 ? 6 : 0 }}>
+                  연장 완료 — 성공 {result.success}건, 실패 {result.failed}건
+                </div>
+                {result.failMsgs.length > 0 && (
+                  <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: 'var(--gray-700)' }}>
+                    {result.failMsgs.map((m, i) => <li key={i}>{m}</li>)}
+                  </ul>
+                )}
+              </div>
+              <button onClick={onDone} style={{ ...styles.btnPrimary, width: '100%', marginTop: 12 }}>확인</button>
+            </>
+          ) : (
+            <>
+              <p style={{ fontSize: 13, color: 'var(--gray-600)', margin: 0 }}>
+                선택한 {applicable.length}건의 만료일을 각 라이선스의 현재 만료일로부터 연장합니다.
+                {skipped > 0 && ` (만료일 없는 ${skipped}건은 제외)`}
+              </p>
+              <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+                {EXTEND_MONTHS_OPTIONS.map(m => (
+                  <button
+                    key={m}
+                    onClick={() => setMonths(m)}
+                    style={{
+                      ...styles.btnSm,
+                      flex: 1, padding: '9px 0', textAlign: 'center',
+                      ...(months === m ? { background: 'var(--blue-700)', color: 'white', borderColor: 'var(--blue-700)' } : {}),
+                    }}
+                  >
+                    {m}개월
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={run}
+                disabled={!months || extending || applicable.length === 0}
+                style={{ ...styles.btnPrimary, width: '100%', marginTop: 16, opacity: (!months || applicable.length === 0) ? 0.5 : 1 }}
+              >
+                {extending ? '연장 중...' : months ? `${months}개월 연장 실행` : '연장 기간을 선택하세요'}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
@@ -227,10 +443,33 @@ function DetailPanel({ row, onClose, onRefresh }) {
     setEmailMsg(''); setEmailErr('')
     if (!form.email) { setEmailErr('이메일을 먼저 입력하고 저장하세요.'); return }
     const { error } = await supabase.functions.invoke('send-license-email', {
-      body: { license_key: row.license_key, email: form.email, grade: form.grade },
+      body: { license_key: row.license_key, email: form.email, grade: form.grade, product_code: row.product_code },
     })
     if (error) setEmailErr(`발송 실패: ${error.message}`)
     else setEmailMsg('이메일 발송됨')
+  }
+
+  async function sendExpiryReminder() {
+    setEmailMsg(''); setEmailErr('')
+    if (!form.email) { setEmailErr('이메일을 먼저 입력하고 저장하세요.'); return }
+    if (!row.expires_at) { setEmailErr('만료일이 없는 라이선스입니다.'); return }
+    const days_left = dDayFor(row.expires_at)
+    if (days_left < 0) { setEmailErr('이미 만료된 라이선스입니다 — 만료 안내 발송은 만료 전에만 사용할 수 있습니다.'); return }
+    const { error } = await supabase.functions.invoke('send-license-email', {
+      body: {
+        license_key: row.license_key, email: form.email, grade: form.grade,
+        type: 'expiry_reminder', days_left, expires_at: row.expires_at.slice(0, 10),
+        product_code: row.product_code,
+      },
+    })
+    if (error) { setEmailErr(`발송 실패: ${error.message}`); return }
+    const notified = row.expiry_notified_days || []
+    await supabase.from('licenses').update({
+      expiry_notified_days: [...notified, days_left],
+      updated_at: new Date().toISOString(),
+    }).eq('license_key', row.license_key)
+    setEmailMsg('만료 안내 이메일 발송됨')
+    onRefresh()
   }
 
   async function releaseHwId(hwid) {
@@ -360,6 +599,16 @@ function DetailPanel({ row, onClose, onRefresh }) {
             <button onClick={saveEmail} style={{ ...styles.btnSm, whiteSpace: 'nowrap' }}>저장</button>
             <button onClick={resendEmail} style={{ ...styles.btnSm, whiteSpace: 'nowrap' }}>재발송</button>
           </div>
+          {row.expires_at && dDayFor(row.expires_at) >= 0 && (
+            <button onClick={sendExpiryReminder} style={{ ...styles.btnSm, alignSelf: 'flex-start' }}>
+              📧 만료 안내 발송 (D-{dDayFor(row.expires_at)})
+            </button>
+          )}
+          {row.expires_at && dDayFor(row.expires_at) < 0 && (
+            <p style={{ fontSize: 11, color: 'var(--gray-400)', margin: 0 }}>
+              이미 만료된 라이선스입니다 — 만료 안내 발송 대상이 아닙니다.
+            </p>
+          )}
           {emailErr && <p style={styles.errText}>{emailErr}</p>}
           {emailMsg && <p style={styles.okText}>{emailMsg}</p>}
 
@@ -502,7 +751,7 @@ function IssueModal({ onClose, onRefresh }) {
 
     if (form.email) {
       const { error: emailErr } = await supabase.functions.invoke('send-license-email', {
-        body: { license_key: key, email: form.email, grade: form.grade },
+        body: { license_key: key, email: form.email, grade: form.grade, product_code: productCode },
       })
       if (emailErr) {
         setSaving(false)
@@ -589,6 +838,9 @@ const styles = {
   filters: { display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap' },
   searchInput: { flex: 1, minWidth: 200, padding: '9px 13px', border: '1.5px solid var(--gray-200)', borderRadius: 9, fontSize: 13, outline: 'none', background: 'white' },
   select: { padding: '9px 13px', border: '1.5px solid var(--gray-200)', borderRadius: 9, fontSize: 13, outline: 'none', background: 'white', color: 'var(--gray-700)' },
+  dateRange: { display: 'flex', alignItems: 'center', gap: 6 },
+  dateInput: { padding: '9px 10px', border: '1.5px solid var(--gray-200)', borderRadius: 9, fontSize: 13, outline: 'none', background: 'white', color: 'var(--gray-700)' },
+  searchBtn: { padding: '9px 18px', background: 'var(--blue-700)', color: 'white', border: 'none', borderRadius: 9, fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' },
   bulkBar: { display: 'flex', alignItems: 'center', gap: 10, background: 'var(--blue-50)', border: '1px solid var(--blue-100)', borderRadius: 10, padding: '8px 16px', marginBottom: 12, fontSize: 13, fontWeight: 600, color: 'var(--blue-700)' },
   card: { background: 'white', borderRadius: 14, boxShadow: '0 1px 3px rgba(0,0,0,0.06)', border: '1px solid var(--gray-100)', overflow: 'hidden' },
   tableHead: {

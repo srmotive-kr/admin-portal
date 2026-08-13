@@ -36,6 +36,12 @@ export default function ReleaseManager() {
       const ext      = file.name.split('.').pop()
       const filePath = `${form.product_code}/${form.version}/${file.name}`
 
+      // 자동 업데이트 클라이언트가 다운로드 후 무결성을 검증할 수 있도록 SHA-256/파일크기를
+      // 업로드 시점에 미리 계산해둔다(자동업데이트_도입방안.md §4.2, 2026-08-12).
+      const fileBuffer  = await file.arrayBuffer()
+      const digest      = await crypto.subtle.digest('SHA-256', fileBuffer)
+      const sha256      = Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('')
+
       const { error: upErr } = await supabase.storage.from(BUCKET).upload(filePath, file, { upsert: true })
       if (upErr) throw new Error(upErr.message)
 
@@ -46,6 +52,8 @@ export default function ReleaseManager() {
         is_active:      false,
         notes:          form.notes.trim() || null,
         virustotal_url: form.virustotal_url.trim() || null,
+        sha256,
+        file_size:      file.size,
       })
       if (dbErr) throw new Error(dbErr.message)
 
