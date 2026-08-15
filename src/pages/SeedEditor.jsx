@@ -116,8 +116,12 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
   const [saving, setSaving]   = useState(false)
   const [msg, setMsg]         = useState(null)
 
+  // setMsg(null)을 여기서 하지 않는다 — handleSave 성공 후에도 새로고침을 위해 load()를
+  // 그대로 재사용하는데, 여기서 지우면 방금 띄운 "저장 완료" 메시지가 화면에 뜨자마자
+  // 사라져 사용자에게는 아무 결과도 안 보인 것처럼 보인다. 초기 진입/그룹전환 시의 메시지
+  // 초기화는 아래 useEffect에서 별도로 처리한다.
   const load = useCallback(async () => {
-    setLoading(true); setMsg(null)
+    setLoading(true)
     const { data, error } = await supabase
       .from('seed_codes_smart_hr_plus').select('*')
       .eq('group_code', groupCode)
@@ -134,7 +138,7 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
     setLoading(false)
   }, [groupCode])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => { setMsg(null); load() }, [load])
   useEffect(() => { onDirtyChange?.(dirty) }, [dirty])
 
   const change = (idx, key, val) => {
@@ -174,8 +178,16 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
       if (error) { setMsg({ type: 'error', text: error.message }); return }
       await touchSyncMeta()
     }
-    setItems(prev => prev.filter((_, i) => i !== idx))
-    setDirty(true)
+    // 기존 저장된 행 삭제는 위에서 이미 DB에 반영됐고(신규 미저장 행 삭제는 애초에 저장할 게
+    // 없음) — 남은 항목 중 아직 저장 안 한 편집(_dirty)이 있을 때만 "미저장" 상태로 남긴다.
+    // 무조건 true로 고정하면, 삭제가 유일한 변경이었을 때 [저장]을 눌러도 toSave가 비어 있어
+    // 아무 반응 없이 dirty만 계속 true로 남아 화면 전환 시 "저장하지 않은 변경사항" 경고가
+    // 삭제 후 영구히 뜨는 버그가 있었다.
+    setItems(prev => {
+      const next = prev.filter((_, i) => i !== idx)
+      setDirty(next.some(row => row._dirty))
+      return next
+    })
   }
 
   const handleSave = async () => {
@@ -193,6 +205,18 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
       return
     }
     setSaving(true); setMsg(null)
+
+    // 기존 행의 코드번호를 서로 맞바꾸는 등(예: 정직 60→70, 복직 70→60을 같이 저장) 순차 UPDATE
+    // 도중 일시적으로 unique(group_code, code) 제약과 충돌할 수 있다 — 저장 전 기존 행들의 code를
+    // 먼저 고유한 임시값(id 기반이라 절대 충돌 안 함)으로 비워 제약을 피한 뒤, 아래 본 저장에서
+    // 최종값을 채운다(id는 UUID라 항상 unique).
+    const existing = toSave.filter(it => it.id !== null)
+    for (const it of existing) {
+      const { error } = await supabase.from('seed_codes_smart_hr_plus')
+        .update({ code: `~tmp-${it.id}` }).eq('id', it.id)
+      if (error) { setMsg({ type: 'error', text: error.message }); setSaving(false); return }
+    }
+
     for (const it of toSave) {
       // 지급방식에 따라 통상임금 포함여부가 달라지는 수당(식대/교통비 등)은 여기서 고정값을
       // 저장하면 안 되므로 항상 'Y'로 강제한다 — 실제 포함여부는 개별 급여정보 등록 시
@@ -462,12 +486,12 @@ function InsuranceTab({ onDirtyChange }) {
   const [msg, setMsg]         = useState(null)
 
   const load = async () => {
-    setLoading(true); setMsg(null)
+    setLoading(true)
     const { data, error } = await supabase.from('insurance_rates').select('*').order('year', { ascending: false })
     if (error) { setMsg({ type: 'error', text: error.message }); setLoading(false); return }
     setItems(data || []); setDirty(false); setLoading(false)
   }
-  useEffect(() => { load() }, [])
+  useEffect(() => { setMsg(null); load() }, [])
   useEffect(() => { onDirtyChange?.(dirty) }, [dirty])
 
   const change = (idx, key, val) => {
@@ -493,8 +517,11 @@ function InsuranceTab({ onDirtyChange }) {
       if (error) { setMsg({ type: 'error', text: error.message }); return }
       await touchSyncMeta()
     }
-    setItems(prev => prev.filter((_, i) => i !== idx))
-    setDirty(true)
+    setItems(prev => {
+      const next = prev.filter((_, i) => i !== idx)
+      setDirty(next.some(row => row._dirty))
+      return next
+    })
   }
 
   const handleSave = async () => {
@@ -557,32 +584,32 @@ function InsuranceTab({ onDirtyChange }) {
                 <tr key={idx} style={{ background: it._dirty ? 'rgba(37,99,235,.03)' : 'transparent', borderBottom: '1px solid #F1F5F9' }}>
                   <td style={s.td}>
                     <input style={{ ...s.input, width: 68, textAlign: 'center' }}
-                      type="number" value={it.year}
+                      type="text" inputMode="numeric" value={it.year}
                       onChange={e => change(idx, 'year', Number(e.target.value))} />
                   </td>
                   <td style={{ ...s.td, textAlign: 'center' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 4, justifyContent: 'center' }}>
                       <input style={{ ...s.input, width: 70, textAlign: 'right' }}
-                        type="number" step="0.0001" value={parseFloat((Number(it.pension_rate || 0) * 100).toFixed(4))}
+                        type="text" inputMode="decimal" value={parseFloat((Number(it.pension_rate || 0) * 100).toFixed(4))}
                         onChange={e => change(idx, 'pension_rate', Number(e.target.value) / 100)} />
                       <span style={{ fontSize: 11, color: '#94A3B8' }}>%</span>
                     </div>
                   </td>
                   <td style={{ ...s.td, textAlign: 'center' }}>
                     <input style={{ ...s.input, width: 110, textAlign: 'right' }}
-                      type="number" value={it.pension_upper_limit || 0}
+                      type="text" inputMode="numeric" value={it.pension_upper_limit || 0}
                       onChange={e => change(idx, 'pension_upper_limit', Number(e.target.value))} />
                   </td>
                   <td style={{ ...s.td, textAlign: 'center' }}>
                     <input style={{ ...s.input, width: 110, textAlign: 'right' }}
-                      type="number" value={it.pension_lower_limit || 0}
+                      type="text" inputMode="numeric" value={it.pension_lower_limit || 0}
                       onChange={e => change(idx, 'pension_lower_limit', Number(e.target.value))} />
                   </td>
                   {['health_rate','care_rate','employ_rate'].map(key => (
                     <td key={key} style={{ ...s.td, textAlign: 'center' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 4, justifyContent: 'center' }}>
                         <input style={{ ...s.input, width: 70, textAlign: 'right' }}
-                          type="number" step="0.0001" value={parseFloat((Number(it[key] || 0) * 100).toFixed(4))}
+                          type="text" inputMode="decimal" value={parseFloat((Number(it[key] || 0) * 100).toFixed(4))}
                           onChange={e => change(idx, key, Number(e.target.value) / 100)} />
                         <span style={{ fontSize: 11, color: '#94A3B8' }}>%</span>
                       </div>
@@ -628,12 +655,12 @@ function MinimumWageTab({ onDirtyChange }) {
   const [msg, setMsg]         = useState(null)
 
   const load = async () => {
-    setLoading(true); setMsg(null)
+    setLoading(true)
     const { data, error } = await supabase.from('minimum_wage').select('*').order('effective_from', { ascending: false })
     if (error) { setMsg({ type: 'error', text: error.message }); setLoading(false); return }
     setItems(data || []); setDirty(false); setLoading(false)
   }
-  useEffect(() => { load() }, [])
+  useEffect(() => { setMsg(null); load() }, [])
   useEffect(() => { onDirtyChange?.(dirty) }, [dirty])
 
   const change = (idx, key, val) => {
@@ -657,8 +684,11 @@ function MinimumWageTab({ onDirtyChange }) {
       if (error) { setMsg({ type: 'error', text: error.message }); return }
       await touchSyncMeta()
     }
-    setItems(prev => prev.filter((_, i) => i !== idx))
-    setDirty(true)
+    setItems(prev => {
+      const next = prev.filter((_, i) => i !== idx)
+      setDirty(next.some(row => row._dirty))
+      return next
+    })
   }
 
   const handleSave = async () => {
@@ -716,7 +746,7 @@ function MinimumWageTab({ onDirtyChange }) {
                   </td>
                   <td style={{ ...s.td, textAlign: 'right' }}>
                     <input style={{ ...s.input, textAlign: 'right' }}
-                      type="number" value={it.amount}
+                      type="text" inputMode="numeric" value={it.amount}
                       onChange={e => change(idx, 'amount', Number(e.target.value))} />
                   </td>
                   <td style={s.td}>
@@ -782,13 +812,13 @@ function SimpleTaxSection() {
   const fileRef = useRef(null)
 
   const load = async () => {
-    setLoading(true); setMsg(null)
+    setLoading(true)
     const { data: versions, error } = await supabase.rpc('get_income_tax_versions')
     if (error) { setMsg({ type: 'error', text: error.message }); setLoading(false); return }
     setAfList((versions || []).map(r => ({ applyFrom: r.apply_from, count: Number(r.cnt) })))
     setLoading(false)
   }
-  useEffect(() => { load() }, [])
+  useEffect(() => { setMsg(null); load() }, [])
 
   const handleDelete = async (applyFrom) => {
     const item = afList.find(y => y.applyFrom === applyFrom)
@@ -995,7 +1025,7 @@ function ExcessRateSection({ onDirtyChange }) {
   const fileRef = useRef(null)
 
   const load = async () => {
-    setLoading(true); setMsg(null)
+    setLoading(true)
     const { data, error } = await supabase
       .from('income_tax_excess_rate').select('*')
       .order('apply_from', { ascending: false })
@@ -1003,7 +1033,7 @@ function ExcessRateSection({ onDirtyChange }) {
     if (error) { setMsg({ type: 'error', text: error.message }); setLoading(false); return }
     setRows(data || []); setDirty(false); setLoading(false)
   }
-  useEffect(() => { load() }, [])
+  useEffect(() => { setMsg(null); load() }, [])
   useEffect(() => { onDirtyChange?.(dirty) }, [dirty])
 
   const change = (idx, key, val) => {
@@ -1029,7 +1059,11 @@ function ExcessRateSection({ onDirtyChange }) {
       if (error) { setMsg({ type: 'error', text: error.message }); return }
       await touchSyncMeta()
     }
-    setRows(prev => prev.filter((_, i) => i !== idx)); setDirty(true)
+    setRows(prev => {
+      const next = prev.filter((_, i) => i !== idx)
+      setDirty(next.some(row => row._dirty))
+      return next
+    })
   }
 
   const handleSave = async () => {
@@ -1158,23 +1192,23 @@ function ExcessRateSection({ onDirtyChange }) {
                       style={{ ...s.input, width: 110 }} placeholder="YYYY-MM-DD" />
                   </td>
                   <td style={s.td}>
-                    <input type="number" value={r.threshold_from} onChange={e => change(i, 'threshold_from', e.target.value)}
+                    <input type="text" inputMode="numeric" value={r.threshold_from} onChange={e => change(i, 'threshold_from', e.target.value)}
                       style={{ ...s.input, textAlign: 'right', width: 120 }} />
                   </td>
                   <td style={s.td}>
-                    <input type="number" value={r.threshold_to ?? ''} onChange={e => change(i, 'threshold_to', e.target.value === '' ? null : e.target.value)}
+                    <input type="text" inputMode="numeric" value={r.threshold_to ?? ''} onChange={e => change(i, 'threshold_to', e.target.value === '' ? null : e.target.value)}
                       style={{ ...s.input, textAlign: 'right', width: 120 }} placeholder="(최고 구간)" />
                   </td>
                   <td style={s.td}>
-                    <input type="number" value={r.accumulated} onChange={e => change(i, 'accumulated', e.target.value)}
+                    <input type="text" inputMode="numeric" value={r.accumulated} onChange={e => change(i, 'accumulated', e.target.value)}
                       style={{ ...s.input, textAlign: 'right', width: 110 }} />
                   </td>
                   <td style={s.td}>
-                    <input type="number" step="0.01" value={r.factor} onChange={e => change(i, 'factor', e.target.value)}
+                    <input type="text" inputMode="decimal" value={r.factor} onChange={e => change(i, 'factor', e.target.value)}
                       style={{ ...s.input, textAlign: 'right', width: 80 }} />
                   </td>
                   <td style={s.td}>
-                    <input type="number" step="0.01" value={r.rate} onChange={e => change(i, 'rate', e.target.value)}
+                    <input type="text" inputMode="decimal" value={r.rate} onChange={e => change(i, 'rate', e.target.value)}
                       style={{ ...s.input, textAlign: 'right', width: 80 }} />
                   </td>
                   <td style={{ ...s.td, textAlign: 'center' }}>
@@ -1214,7 +1248,7 @@ function HolidayTab({ onDirtyChange }) {
   }
 
   const load = useCallback(async () => {
-    setLoading(true); setMsg(null)
+    setLoading(true)
     const { data, error } = await supabase
       .from('holidays').select('*')
       .eq('year', year)
@@ -1224,7 +1258,7 @@ function HolidayTab({ onDirtyChange }) {
   }, [year])
 
   useEffect(() => { loadYears() }, [])
-  useEffect(() => { if (year) load() }, [load])
+  useEffect(() => { if (year) { setMsg(null); load() } }, [load])
   useEffect(() => { onDirtyChange?.(dirty) }, [dirty])
 
   const change = (idx, key, val) => {
@@ -1260,8 +1294,11 @@ function HolidayTab({ onDirtyChange }) {
       if (error) { setMsg({ type: 'error', text: error.message }); return }
       await touchSyncMeta()
     }
-    setItems(prev => prev.filter((_, i) => i !== idx))
-    setDirty(true)
+    setItems(prev => {
+      const next = prev.filter((_, i) => i !== idx)
+      setDirty(next.some(row => row._dirty))
+      return next
+    })
   }
 
   const handleSave = async () => {
@@ -1849,13 +1886,13 @@ function LeaveRateTab({ onDirtyChange }) {
   const [msg,     setMsg]     = useState(null)
 
   const load = async () => {
-    setLoading(true); setMsg(null)
+    setLoading(true)
     const { data, error } = await supabase
       .from('gov_leave_benefit_rates').select('*').order('year', { ascending: false })
     if (error) { setMsg({ type: 'error', text: error.message }); setLoading(false); return }
     setItems(data || []); setDirty(false); setLoading(false)
   }
-  useEffect(() => { load() }, [])
+  useEffect(() => { setMsg(null); load() }, [])
   useEffect(() => { onDirtyChange?.(dirty) }, [dirty])
 
   const change = (idx, key, val) => {
@@ -1882,8 +1919,11 @@ function LeaveRateTab({ onDirtyChange }) {
       if (error) { setMsg({ type: 'error', text: error.message }); return }
       await touchSyncMeta()
     }
-    setItems(prev => prev.filter((_, i) => i !== idx))
-    setDirty(true)
+    setItems(prev => {
+      const next = prev.filter((_, i) => i !== idx)
+      setDirty(next.some(row => row._dirty))
+      return next
+    })
   }
 
   const handleSave = async () => {
@@ -1951,7 +1991,7 @@ function LeaveRateTab({ onDirtyChange }) {
                 <tr key={idx} style={{ background: it._dirty ? 'rgba(37,99,235,.03)' : 'transparent', borderBottom: '1px solid #F1F5F9' }}>
                   <td style={s.td}>
                     <input style={{ ...s.input, width: 78, textAlign: 'center' }}
-                      type="number" value={it.year}
+                      type="text" inputMode="numeric" value={it.year}
                       onChange={e => change(idx, 'year', Number(e.target.value))} />
                   </td>
                   <td style={s.td}>
@@ -1961,7 +2001,7 @@ function LeaveRateTab({ onDirtyChange }) {
                   </td>
                   <td style={{ ...s.td, textAlign: 'center' }}>
                     <input style={{ ...s.input, width: 60, textAlign: 'center' }}
-                      type="number" value={it.paternity_days ?? ''}
+                      type="text" inputMode="numeric" value={it.paternity_days ?? ''}
                       onChange={e => change(idx, 'paternity_days', e.target.value === '' ? null : Number(e.target.value))} />
                   </td>
                   <td style={s.td}>
@@ -1981,7 +2021,7 @@ function LeaveRateTab({ onDirtyChange }) {
                     <td key={key} style={{ ...s.td, textAlign: 'center' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 2, justifyContent: 'center' }}>
                         <input style={{ ...s.input, width: 56, textAlign: 'right' }}
-                          type="number" step="1" value={it[key] != null ? (Number(it[key]) * 100).toFixed(0) : ''}
+                          type="text" inputMode="numeric" value={it[key] != null ? (Number(it[key]) * 100).toFixed(0) : ''}
                           onChange={e => change(idx, key, e.target.value === '' ? null : Number(e.target.value) / 100)} />
                         <span style={{ fontSize: 11, color: '#94A3B8' }}>%</span>
                       </div>

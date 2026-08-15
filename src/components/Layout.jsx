@@ -2,16 +2,31 @@ import { NavLink, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
 import { useProduct } from '../lib/ProductContext'
 
-const NAV = [
+// 공용 인프라 메뉴 — 어떤 상품이든 필요한 라이선스·배포 인프라, 화면은 공유하되 데이터는
+// product_code로 완전히 분리됨(각 페이지 컴포넌트가 fail-safe로 스스로 보장).
+const COMMON_NAV = [
   { to: '/', label: '대시보드', icon: '◈' },
   { to: '/licenses', label: '라이선스 관리', icon: '🔑' },
   { to: '/email-history', label: '이메일 발송 이력', icon: '📧' },
   { to: '/releases', label: '릴리즈 관리', icon: '📦' },
   { to: '/renewals', label: 'FREE 갱신 관리', icon: '♻️' },
-  { to: '/seed', label: 'Seed 편집기', icon: '🗄️', productOnly: 'smart-hr-plus' },
-  { to: '/checklist', label: '연간 관리 항목', icon: '📋' },
-  { to: '/broadcast', label: '공지 관리', icon: '📢' },
 ]
+
+// 제품 도메인 메뉴 — 화면 자체가 특정 상품 전용. 상품별로 완전히 다른 메뉴 세트를 정의한다
+// (멀티프로덕트_완전분리_가이드라인.md §3). 아직 해당 상품 전용 콘텐츠가 없으면 COMMON_NAV만 남긴다.
+const NAV_BY_PRODUCT = {
+  'smart-hr-plus': [
+    ...COMMON_NAV,
+    { to: '/seed', label: 'Seed 편집기', icon: '🗄️' },
+    { to: '/checklist', label: '연간 관리 항목', icon: '📋' },
+    { to: '/broadcast', label: '공지 관리', icon: '📢' },
+  ],
+  'smart-planner-plus': [
+    ...COMMON_NAV,
+    { to: '/seed', label: 'Seed 편집기', icon: '🗄️' },
+    { to: '/broadcast', label: '공지 관리', icon: '📢' },
+  ],
+}
 
 export default function Layout({ children }) {
   const navigate = useNavigate()
@@ -22,7 +37,7 @@ export default function Layout({ children }) {
     navigate('/login')
   }
 
-  const nav = NAV.filter(item => !item.productOnly || item.productOnly === productCode)
+  const nav = NAV_BY_PRODUCT[productCode] ?? []
 
   return (
     <div style={styles.shell}>
@@ -48,7 +63,7 @@ export default function Layout({ children }) {
               onChange={e => selectProduct(e.target.value)}
             >
               {products.map(p => (
-                <option key={p.code} value={p.code}>{p.display_name}</option>
+                <option key={p.code} value={p.code} style={{ color: '#1E293B' }}>{p.display_name}</option>
               ))}
             </select>
           </div>

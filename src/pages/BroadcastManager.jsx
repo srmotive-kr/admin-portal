@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { useProduct } from '../lib/ProductContext'
 
 const SEVERITY_LABEL = { info: '일반', warning: '경고', critical: '긴급' }
 const SEVERITY_COLOR = {
@@ -69,7 +70,15 @@ const EMPTY_FORM = {
   require_ack: false, action_label: '', action_menu: '', expires_at: '',
 }
 
+// 상품별 물리적으로 분리된 테이블 — product_code 컬럼으로 필터링하는 공유 테이블 방식은
+// 필터 누락 시 다른 상품 공지가 그대로 노출될 위험이 있어(멀티프로덕트_완전분리_가이드라인.md),
+// 테이블 자체를 상품별로 나눠 섞일 가능성을 원천 차단한다.
+function broadcastTable(productCode) {
+  return `broadcast_messages_${(productCode || '').replace(/-/g, '_')}`
+}
+
 export default function BroadcastManager() {
+  const { productCode } = useProduct()
   const [messages, setMessages] = useState([])
   const [loading, setLoading]   = useState(true)
   const [form, setForm]         = useState(EMPTY_FORM)
@@ -77,12 +86,13 @@ export default function BroadcastManager() {
   const [err, setErr]           = useState('')
   const [ok, setOk]             = useState('')
 
-  useEffect(() => { fetchMessages() }, [])
+  useEffect(() => { fetchMessages() }, [productCode])
 
   async function fetchMessages() {
     setLoading(true)
+    if (!productCode) { setMessages([]); setLoading(false); return }
     const { data } = await supabase
-      .from('broadcast_messages')
+      .from(broadcastTable(productCode))
       .select('*')
       .order('created_at', { ascending: false })
     setMessages(data || [])
@@ -90,6 +100,7 @@ export default function BroadcastManager() {
   }
 
   async function handleSend() {
+    if (!productCode) return
     if (!form.title.trim()) return setErr('제목을 입력하세요.')
     if (!form.body.trim())  return setErr('내용을 입력하세요.')
     setErr(''); setOk(''); setSaving(true)
@@ -102,7 +113,7 @@ export default function BroadcastManager() {
       action_menu:  form.action_menu.trim()  || null,
       expires_at:  form.expires_at || null,
     }
-    const { error } = await supabase.from('broadcast_messages').insert(payload)
+    const { error } = await supabase.from(broadcastTable(productCode)).insert(payload)
     setSaving(false)
     if (error) return setErr(error.message)
     setOk('공지 전송 완료')
@@ -111,8 +122,9 @@ export default function BroadcastManager() {
   }
 
   async function handleDelete(id) {
+    if (!productCode) return
     if (!confirm('이 공지를 삭제하시겠습니까?')) return
-    await supabase.from('broadcast_messages').delete().eq('id', id)
+    await supabase.from(broadcastTable(productCode)).delete().eq('id', id)
     setMessages(prev => prev.filter(m => m.id !== id))
   }
 
@@ -161,7 +173,9 @@ export default function BroadcastManager() {
             <div style={t.col}>
               <label style={t.label}>이동할 메뉴 키 (선택)</label>
               <input style={t.input} value={form.action_menu} onChange={set('action_menu')} placeholder="예: ts (정산업무)" />
-              <div style={t.hint}>앱 메뉴 키: dh(대시보드) hr(채용정보) ts(정산업무) pl(급여내역) sm(시스템관리)</div>
+              {productCode === 'smart-hr-plus' && (
+                <div style={t.hint}>앱 메뉴 키: dh(대시보드) hr(채용정보) ts(정산업무) pl(급여내역) sm(시스템관리)</div>
+              )}
             </div>
           </div>
         )}

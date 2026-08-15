@@ -42,8 +42,8 @@ export default function EmailHistory() {
   async function load() {
     setLoading(true)
     setLoadError('')
-    let q = supabase.from('email_logs').select('*', { count: 'exact' })
-    if (productCode) q = q.eq('product_code', productCode)
+    if (!productCode) { setRows([]); setTotal(0); setLoading(false); return }
+    let q = supabase.from('email_logs').select('*', { count: 'exact' }).eq('product_code', productCode)
     if (filter.q) q = q.or(`license_key.ilike.%${filter.q}%,email.ilike.%${filter.q}%`)
     if (filter.type) q = q.eq('type', filter.type)
     if (filter.result) q = q.eq('success', filter.result === 'success')

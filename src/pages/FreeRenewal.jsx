@@ -17,12 +17,13 @@ export default function FreeRenewal() {
 
   async function fetchLicenses() {
     setLoading(true)
+    if (!productCode) { setLicenses([]); setLoading(false); return }
     let q = supabase
       .from('licenses')
       .select('*')
       .eq('grade', 'FREE')
+      .eq('product_code', productCode)
       .order('expires_at', { ascending: true, nullsFirst: false })
-    if (productCode) q = q.eq('product_code', productCode)
 
     const now   = new Date()
     const in30  = new Date(now); in30.setDate(in30.getDate() + 30)

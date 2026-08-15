@@ -21,10 +21,16 @@ export default function Dashboard() {
   useEffect(() => {
     async function load() {
       setLoading(true)
+      if (!productCode) {
+        setStats({ active: 0, newMonth: 0, expiringSoon: 0, pending: 0 })
+        setEvents([])
+        setLoading(false)
+        return
+      }
       const now = new Date()
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
       const in30 = new Date(Date.now() + 30 * 86400000).toISOString()
-      const scope = (q) => productCode ? q.eq('product_code', productCode) : q
+      const scope = (q) => q.eq('product_code', productCode)
 
       const [activeRes, newRes, expiringRes, pendingRes, eventsRes] = await Promise.all([
         scope(supabase.from('licenses').select('id', { count: 'exact', head: true }).eq('status', 'ACTIVE')),

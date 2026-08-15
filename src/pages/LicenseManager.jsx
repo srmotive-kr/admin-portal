@@ -2,7 +2,38 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useProduct } from '../lib/ProductContext'
 
-const GRADES = ['', 'FREE', 'STARTER', 'PRO', 'ENTERPRISE']
+// 등급 체계는 제품마다 다르다 — Smart HR+는 FREE/STARTER/PRO/ENTERPRISE(직원수 기준 4단계).
+// Smart Planner+는 로컬 앱 licenseLimits.js의 FREE(개인 자가설계)/ADVISOR_FREE(설계사 무료)
+// 두 등급이 이미 구현돼 있고, 유료 2단계(PRO/PRO_CRM)는 company-site 랜딩페이지 3단 가격표
+// (PRO/PRO+CRM)와 이름을 맞췄다 — 정확한 PC수 등 사업조건은 licenseLimits.js에 이미 남겨진
+// "TODO(사업 확정 필요)"와 동일하게 미확정이라, 당장은 HR+ PRO/ENTERPRISE 조건을 그대로
+// 재사용한 임시값이다(가격을 그대로 재사용한 것과 같은 원칙).
+const GRADE_OPTIONS_BY_PRODUCT = {
+  'smart-planner-plus': ['FREE', 'ADVISOR_FREE', 'PRO', 'PRO_CRM'],
+}
+const DEFAULT_GRADE_OPTIONS = ['FREE', 'STARTER', 'PRO', 'ENTERPRISE']
+function gradeOptionsFor(productCode) {
+  return GRADE_OPTIONS_BY_PRODUCT[productCode] || DEFAULT_GRADE_OPTIONS
+}
+
+const ISSUE_LIMITS_BY_PRODUCT = {
+  'smart-planner-plus': {
+    FREE:         { max_emps: null, max_users: 1 },
+    ADVISOR_FREE: { max_emps: null, max_users: 1 },
+    PRO:          { max_emps: null, max_users: 2 },
+    PRO_CRM:      { max_emps: null, max_users: 0 },
+  },
+}
+const DEFAULT_ISSUE_LIMITS = {
+  FREE: { max_emps: 4, max_users: 1 }, STARTER: { max_emps: 9, max_users: 1 },
+  PRO: { max_emps: 29, max_users: 2 }, ENTERPRISE: { max_emps: null, max_users: 0 },
+}
+function issueLimitsFor(productCode, grade) {
+  const table = ISSUE_LIMITS_BY_PRODUCT[productCode] || DEFAULT_ISSUE_LIMITS
+  return table[grade] || DEFAULT_ISSUE_LIMITS.FREE
+}
+
+const GRADES = ['', ...DEFAULT_GRADE_OPTIONS]
 const STATUSES = ['', 'ACTIVE', 'PENDING', 'EXPIRED', 'REVOKED']
 const CHANNELS = ['', 'A', 'B', 'C', 'E']
 
@@ -69,8 +100,8 @@ export default function LicenseManager() {
   async function load() {
     setLoading(true)
     setLoadError('')
-    let q = supabase.from('licenses').select('*', { count: 'exact' })
-    if (productCode) q = q.eq('product_code', productCode)
+    if (!productCode) { setRows([]); setTotal(0); setLoading(false); return }
+    let q = supabase.from('licenses').select('*', { count: 'exact' }).eq('product_code', productCode)
     if (filter.q) q = q.or(`license_key.ilike.%${filter.q}%,email.ilike.%${filter.q}%`)
     if (filter.grade) q = q.eq('grade', filter.grade)
     if (filter.status) q = q.eq('status', filter.status)
@@ -165,7 +196,7 @@ export default function LicenseManager() {
         />
         <select value={filter.grade} onChange={e => { setFilter(f => ({ ...f, grade: e.target.value })); setPage(0) }} style={styles.select}>
           <option value="">등급 전체</option>
-          {GRADES.filter(Boolean).map(g => <option key={g} value={g}>{g}</option>)}
+          {gradeOptionsFor(productCode).map(g => <option key={g} value={g}>{g}</option>)}
         </select>
         <select value={filter.status} onChange={e => { setFilter(f => ({ ...f, status: e.target.value })); setPage(0) }} style={styles.select}>
           <option value="">상태 전체</option>
@@ -558,7 +589,7 @@ function DetailPanel({ row, onClose, onRefresh }) {
             <div style={styles.field}>
               <label style={styles.label}>등급</label>
               <select value={form.grade} onChange={e => setForm(f => ({ ...f, grade: e.target.value }))} style={styles.input}>
-                {['FREE', 'STARTER', 'PRO', 'ENTERPRISE'].map(g => <option key={g} value={g}>{g}</option>)}
+                {gradeOptionsFor(row.product_code).map(g => <option key={g} value={g}>{g}</option>)}
               </select>
             </div>
             <div style={styles.field}>
@@ -567,11 +598,11 @@ function DetailPanel({ row, onClose, onRefresh }) {
             </div>
             <div style={styles.field}>
               <label style={styles.label}>최대 직원수 <span style={{ color: '#9CA3AF', fontWeight: 400 }}>(비워두면 무제한)</span></label>
-              <input type="number" value={form.max_emps} onChange={e => setForm(f => ({ ...f, max_emps: e.target.value }))} style={styles.input} min={1} placeholder="무제한" />
+              <input type="text" inputMode="numeric" value={form.max_emps} onChange={e => setForm(f => ({ ...f, max_emps: e.target.value }))} style={styles.input} placeholder="무제한" />
             </div>
             <div style={{ ...styles.field, gridColumn: '1 / -1' }}>
               <label style={styles.label}>최대 PC수 (max_users)</label>
-              <input type="number" value={form.max_users} onChange={e => setForm(f => ({ ...f, max_users: e.target.value }))} style={styles.input} min={1} />
+              <input type="text" inputMode="numeric" value={form.max_users} onChange={e => setForm(f => ({ ...f, max_users: e.target.value }))} style={styles.input} />
             </div>
           </div>
           <div style={styles.field}>
@@ -739,8 +770,7 @@ function IssueModal({ onClose, onRefresh }) {
       channel: form.channel,
       status: 'ACTIVE',
       product_code: productCode,
-      max_emps:  { FREE: 4, STARTER: 9, PRO: 29, ENTERPRISE: null }[form.grade] ?? 4,
-      max_users: { FREE: 1, STARTER: 1, PRO: 2,  ENTERPRISE: 0    }[form.grade] ?? 1,
+      ...issueLimitsFor(productCode, form.grade),
     }).select().single()
 
     if (error) {
@@ -795,7 +825,7 @@ function IssueModal({ onClose, onRefresh }) {
           <div style={styles.field}>
             <label style={styles.label}>등급 *</label>
             <select value={form.grade} onChange={e => setForm(f => ({ ...f, grade: e.target.value }))} style={styles.input}>
-              {['FREE', 'STARTER', 'PRO', 'ENTERPRISE'].map(g => <option key={g} value={g}>{g}</option>)}
+              {gradeOptionsFor(productCode).map(g => <option key={g} value={g}>{g}</option>)}
             </select>
           </div>
           <div style={styles.field}>

@@ -19,9 +19,8 @@ export default function ReleaseManager() {
 
   async function fetchReleases() {
     setLoading(true)
-    let q = supabase.from('releases').select('*')
-    if (productCode) q = q.eq('product_code', productCode)
-    const { data } = await q.order('created_at', { ascending: false })
+    if (!productCode) { setReleases([]); setLoading(false); return }
+    const { data } = await supabase.from('releases').select('*').eq('product_code', productCode).order('created_at', { ascending: false })
     setReleases(data || [])
     setLoading(false)
   }
