@@ -119,7 +119,7 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
   const load = useCallback(async () => {
     setLoading(true); setMsg(null)
     const { data, error } = await supabase
-      .from('seed_codes').select('*')
+      .from('seed_codes_smart_hr_plus').select('*')
       .eq('group_code', groupCode)
       .order('sort_order', { ascending: true })
     if (error) { setMsg({ type: 'error', text: error.message }); setLoading(false); return }
@@ -170,7 +170,7 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
     if (it.is_system_default) return
     if (it.id !== null) {
       if (!window.confirm('삭제하시겠습니까?')) return
-      const { error } = await supabase.from('seed_codes').delete().eq('id', it.id)
+      const { error } = await supabase.from('seed_codes_smart_hr_plus').delete().eq('id', it.id)
       if (error) { setMsg({ type: 'error', text: error.message }); return }
       await touchSyncMeta()
     }
@@ -214,10 +214,10 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
       }
       if (!payload.name) continue
       if (it.id === null) {
-        const { error } = await supabase.from('seed_codes').insert(payload)
+        const { error } = await supabase.from('seed_codes_smart_hr_plus').insert(payload)
         if (error) { setMsg({ type: 'error', text: error.message }); setSaving(false); return }
       } else {
-        const { error } = await supabase.from('seed_codes').update(payload).eq('id', it.id)
+        const { error } = await supabase.from('seed_codes_smart_hr_plus').update(payload).eq('id', it.id)
         if (error) { setMsg({ type: 'error', text: error.message }); setSaving(false); return }
       }
     }
@@ -1709,10 +1709,10 @@ function BulkUploadModal({ onClose }) {
         const groups = [...new Set(preview.codes.map(c => c.group_code))]
         for (const gc of groups) {
           setProgress(`코드 [${gc}] 처리 중…`)
-          const { error: delErr } = await supabase.from('seed_codes').delete().eq('group_code', gc)
+          const { error: delErr } = await supabase.from('seed_codes_smart_hr_plus').delete().eq('group_code', gc)
           if (delErr) throw delErr
           const newCodes = preview.codes.filter(c => c.group_code === gc)
-          const { error } = await supabase.from('seed_codes').insert(newCodes)
+          const { error } = await supabase.from('seed_codes_smart_hr_plus').insert(newCodes)
           if (error) throw error
         }
       }
