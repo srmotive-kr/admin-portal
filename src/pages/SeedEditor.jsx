@@ -107,6 +107,21 @@ export default function SeedEditor() {
   )
 }
 
+// ─── 저장 결과 안내(2026-09-04) ─────────────────────────────────────────────
+// 토스트(인라인 알림 박스)로는 "저장 완료" 메시지가 화면에서 순식간에 사라져(1~2프레임,
+// 육안 인지 불가) 사용자가 결과를 확인할 수 없었다 — 화면 녹화로 실제 발생 확인. 근본 원인을
+// 특정하지 못해(더블클릭 경합 방지·커스텀 모달 팝업 시도 후에도 재현) 리액트 렌더링에 아예
+// 의존하지 않는 브라우저 네이티브 alert()로 대체한다 — alert()는 동기 블로킹 호출이라 사용자가
+// 직접 닫기 전까지 물리적으로 사라질 수 없다(state/타이밍 문제의 영향을 받지 않음).
+function MsgModal({ msg, onClose }) {
+  useEffect(() => {
+    if (!msg) return
+    window.alert(msg.text)
+    onClose()
+  }, [msg])
+  return null
+}
+
 // ─── 코드 탭 ────────────────────────────────────────────────────────────────
 function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
   const grp          = CODE_GROUPS.find(g => g.code === groupCode)
@@ -115,6 +130,12 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving]   = useState(false)
   const [msg, setMsg]         = useState(null)
+  // 저장 버튼 연타/더블클릭 방지용 — disabled={saving} 속성만으로는 React 렌더 반영 전에
+  // 두 번째 클릭 이벤트가 이미 발생해버릴 수 있다(같은 틱 안에서 두 핸들러가 모두 시작).
+  // 두 번째 handleSave가 시작하며 setMsg(null)을 다시 호출하면, 첫 번째가 방금 띄운
+  // "저장 완료"가 뜨자마자 지워져 사용자에게는 한 프레임만 깜박이는 것처럼 보인다
+  // (2026-09-04, 실제로 이 증상이 재현됨 — 화면 녹화로 1~2프레임만 뜨는 것 확인).
+  const savingRef = useRef(false)
 
   // setMsg(null)을 여기서 하지 않는다 — handleSave 성공 후에도 새로고침을 위해 load()를
   // 그대로 재사용하는데, 여기서 지우면 방금 띄운 "저장 완료" 메시지가 화면에 뜨자마자
@@ -191,64 +212,75 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
   }
 
   const handleSave = async () => {
+    if (savingRef.current) return // 연타/더블클릭으로 두 번째 저장이 겹쳐 시작되는 것 차단
     const toSave = items.filter(it => it._dirty)
     if (!toSave.length) return
-    // 신규 시스템코드는 설명·사용처 입력이 필수 — 로컬 앱의 충돌감지 팝업에서 사용자에게
-    // 이 코드가 무엇인지 보여줄 근거 정보이므로 비어있으면 저장을 차단한다.
-    const missingInfo = toSave.filter(it =>
-      it.id === null && it.is_system_default &&
-      (!(it.description || '').trim() || !(it.usage_location || '').trim())
-    )
-    if (missingInfo.length) {
-      const names = missingInfo.map(it => `"${it.name || '(미입력)'}"`).join(', ')
-      setMsg({ type: 'error', text: `시스템코드는 설명·사용처를 반드시 입력해야 합니다: ${names}` })
-      return
-    }
-    setSaving(true); setMsg(null)
-
-    // 기존 행의 코드번호를 서로 맞바꾸는 등(예: 정직 60→70, 복직 70→60을 같이 저장) 순차 UPDATE
-    // 도중 일시적으로 unique(group_code, code) 제약과 충돌할 수 있다 — 저장 전 기존 행들의 code를
-    // 먼저 고유한 임시값(id 기반이라 절대 충돌 안 함)으로 비워 제약을 피한 뒤, 아래 본 저장에서
-    // 최종값을 채운다(id는 UUID라 항상 unique).
-    const existing = toSave.filter(it => it.id !== null)
-    for (const it of existing) {
-      const { error } = await supabase.from('seed_codes_smart_hr_plus')
-        .update({ code: `~tmp-${it.id}` }).eq('id', it.id)
-      if (error) { setMsg({ type: 'error', text: error.message }); setSaving(false); return }
-    }
-
-    for (const it of toSave) {
-      // 지급방식에 따라 통상임금 포함여부가 달라지는 수당(식대/교통비 등)은 여기서 고정값을
-      // 저장하면 안 되므로 항상 'Y'로 강제한다 — 실제 포함여부는 개별 급여정보 등록 시
-      // 사용자가 선택한 지급방식(att_based_yn)으로 스마트HR+에서 판정한다.
-      const isAttOptional = grp?.attOptionalNames?.includes((it.name || '').trim())
-      const payload = {
-        group_code:        it.group_code,
-        code:              (it.code || '').toUpperCase().trim(),
-        name:              (it.name || '').trim(),
-        sort_order:        it.sort_order,
-        use_yn:            it.use_yn,
-        taxable_yn:        it.taxable_yn,
-        ordinary_yn:       isAttOptional ? 'Y' : it.ordinary_yn,
-        is_system_default: it.is_system_default || 0,
-        is_settle_code:    it.is_settle_code    || 0,
-        description:       (it.description || '').trim() || null,
-        usage_location:    (it.usage_location || '').trim() || null,
-        synonyms:           (it.synonyms || '').trim() || null,
+    savingRef.current = true
+    try {
+      // 신규 시스템코드는 설명·사용처 입력이 필수 — 로컬 앱의 충돌감지 팝업에서 사용자에게
+      // 이 코드가 무엇인지 보여줄 근거 정보이므로 비어있으면 저장을 차단한다.
+      const missingInfo = toSave.filter(it =>
+        it.id === null && it.is_system_default &&
+        (!(it.description || '').trim() || !(it.usage_location || '').trim())
+      )
+      if (missingInfo.length) {
+        const names = missingInfo.map(it => `"${it.name || '(미입력)'}"`).join(', ')
+        setMsg({ type: 'error', text: `시스템코드는 설명·사용처를 반드시 입력해야 합니다: ${names}` })
+        return
       }
-      if (!payload.name) continue
-      if (it.id === null) {
-        const { error } = await supabase.from('seed_codes_smart_hr_plus').insert(payload)
-        if (error) { setMsg({ type: 'error', text: error.message }); setSaving(false); return }
-      } else {
-        const { error } = await supabase.from('seed_codes_smart_hr_plus').update(payload).eq('id', it.id)
-        if (error) { setMsg({ type: 'error', text: error.message }); setSaving(false); return }
+      setSaving(true); setMsg(null)
+
+      // 기존 행의 코드번호를 서로 맞바꾸는 등(예: 정직 60→70, 복직 70→60을 같이 저장) 순차 UPDATE
+      // 도중 일시적으로 unique(group_code, code) 제약과 충돌할 수 있다 — 저장 전 기존 행들의 code를
+      // 먼저 고유한 임시값(id 기반이라 절대 충돌 안 함)으로 비워 제약을 피한 뒤, 아래 본 저장에서
+      // 최종값을 채운다(id는 UUID라 항상 unique).
+      const existing = toSave.filter(it => it.id !== null)
+      for (const it of existing) {
+        const { error } = await supabase.from('seed_codes_smart_hr_plus')
+          .update({ code: `~tmp-${it.id}` }).eq('id', it.id)
+        if (error) { setMsg({ type: 'error', text: error.message }); return }
       }
+
+      for (const it of toSave) {
+        // 지급방식에 따라 통상임금 포함여부가 달라지는 수당(식대/교통비 등)은 여기서 고정값을
+        // 저장하면 안 되므로 항상 'Y'로 강제한다 — 실제 포함여부는 개별 급여정보 등록 시
+        // 사용자가 선택한 지급방식(att_based_yn)으로 스마트HR+에서 판정한다.
+        const isAttOptional = grp?.attOptionalNames?.includes((it.name || '').trim())
+        const payload = {
+          group_code:        it.group_code,
+          code:              (it.code || '').toUpperCase().trim(),
+          name:              (it.name || '').trim(),
+          sort_order:        it.sort_order,
+          use_yn:            it.use_yn,
+          taxable_yn:        it.taxable_yn,
+          ordinary_yn:       isAttOptional ? 'Y' : it.ordinary_yn,
+          is_system_default: it.is_system_default || 0,
+          is_settle_code:    it.is_settle_code    || 0,
+          description:       (it.description || '').trim() || null,
+          usage_location:    (it.usage_location || '').trim() || null,
+          synonyms:           (it.synonyms || '').trim() || null,
+        }
+        if (!payload.name) continue
+        if (it.id === null) {
+          const { error } = await supabase.from('seed_codes_smart_hr_plus').insert(payload)
+          if (error) { setMsg({ type: 'error', text: error.message }); return }
+        } else {
+          const { error } = await supabase.from('seed_codes_smart_hr_plus').update(payload).eq('id', it.id)
+          if (error) { setMsg({ type: 'error', text: error.message }); return }
+        }
+      }
+      await touchSyncMeta()
+      setMsg({ type: 'success', text: '정상적으로 저장되었습니다.' })
+      load()
+    } catch (e) {
+      // supabase 호출이 에러 객체가 아니라 예외를 던지는 경우(네트워크 단절 등) — catch가
+      // 없으면 setMsg가 아예 호출되지 않아 성공/실패 어느 안내도 안 뜨고 saving 상태만
+      // 켜졌다 꺼지는 것처럼 보인다(2026-09-04 실제 재현 사례).
+      setMsg({ type: 'error', text: e?.message || String(e) })
+    } finally {
+      savingRef.current = false
+      setSaving(false)
     }
-    await touchSyncMeta()
-    setMsg({ type: 'success', text: '저장 완료' })
-    setSaving(false)
-    load()
   }
 
   return (
@@ -283,12 +315,7 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
           </div>
         </div>
 
-        {msg && (
-          <div style={{ ...s.alert, ...(msg.type === 'error' ? s.alertError : s.alertOk), display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span>{msg.text}</span>
-            <button onClick={() => setMsg(null)} style={s.alertClose}>×</button>
-          </div>
-        )}
+        <MsgModal msg={msg} onClose={() => setMsg(null)} />
 
         {groupCode === 'ALLOWANCE' && (
           <div style={s.helpBox}>
@@ -484,6 +511,7 @@ function InsuranceTab({ onDirtyChange }) {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving]   = useState(false)
   const [msg, setMsg]         = useState(null)
+  const savingRef = useRef(false) // 저장 버튼 연타 방지(2026-09-04, CodeTab과 동일한 이유)
 
   const load = async () => {
     setLoading(true)
@@ -525,22 +553,34 @@ function InsuranceTab({ onDirtyChange }) {
   }
 
   const handleSave = async () => {
+    if (savingRef.current) return
     const toSave = items.filter(it => it._dirty)
     if (!toSave.length) return
-    setSaving(true); setMsg(null)
-    for (const it of toSave) {
-      const { _dirty, id, ...payload } = it
-      if (id === null) {
-        const { error } = await supabase.from('insurance_rates').insert(payload)
-        if (error) { setMsg({ type: 'error', text: error.message }); setSaving(false); return }
-      } else {
-        const { error } = await supabase.from('insurance_rates').update(payload).eq('id', id)
-        if (error) { setMsg({ type: 'error', text: error.message }); setSaving(false); return }
+    savingRef.current = true
+    try {
+      setSaving(true); setMsg(null)
+      for (const it of toSave) {
+        const { _dirty, id, ...payload } = it
+        if (id === null) {
+          const { error } = await supabase.from('insurance_rates').insert(payload)
+          if (error) { setMsg({ type: 'error', text: error.message }); return }
+        } else {
+          const { error } = await supabase.from('insurance_rates').update(payload).eq('id', id)
+          if (error) { setMsg({ type: 'error', text: error.message }); return }
+        }
       }
+      await touchSyncMeta()
+      setMsg({ type: 'success', text: '정상적으로 저장되었습니다.' })
+      load()
+    } catch (e) {
+      // supabase 호출이 에러 객체가 아니라 예외를 던지는 경우(네트워크 단절 등) — catch가
+      // 없으면 setMsg가 아예 호출되지 않아 성공/실패 어느 안내도 안 뜨고 saving 상태만
+      // 켜졌다 꺼지는 것처럼 보인다(2026-09-04 실제 재현 사례).
+      setMsg({ type: 'error', text: e?.message || String(e) })
+    } finally {
+      savingRef.current = false
+      setSaving(false)
     }
-    await touchSyncMeta()
-    setMsg({ type: 'success', text: '저장 완료' })
-    setSaving(false); load()
   }
 
   const fmtRate = v => v != null ? (Number(v) * 100).toFixed(4).replace(/\.?0+$/, '') + '%' : ''
@@ -560,7 +600,7 @@ function InsuranceTab({ onDirtyChange }) {
           </button>
         </div>
       </div>
-      {msg && <div style={{ ...s.alert, ...(msg.type === 'error' ? s.alertError : s.alertOk), display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}><span>{msg.text}</span><button onClick={() => setMsg(null)} style={s.alertClose}>×</button></div>}
+      <MsgModal msg={msg} onClose={() => setMsg(null)} />
       {loading ? <div style={s.empty}>로딩 중…</div> : (
         <div style={{ overflowX: 'auto' }}>
           <table style={s.table}>
@@ -653,6 +693,7 @@ function MinimumWageTab({ onDirtyChange }) {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving]   = useState(false)
   const [msg, setMsg]         = useState(null)
+  const savingRef = useRef(false) // 저장 버튼 연타 방지(2026-09-04, CodeTab과 동일한 이유)
 
   const load = async () => {
     setLoading(true)
@@ -692,22 +733,34 @@ function MinimumWageTab({ onDirtyChange }) {
   }
 
   const handleSave = async () => {
+    if (savingRef.current) return
     const toSave = items.filter(it => it._dirty)
     if (!toSave.length) return
-    setSaving(true); setMsg(null)
-    for (const it of toSave) {
-      const { _dirty, id, ...payload } = it
-      if (id === null) {
-        const { error } = await supabase.from('minimum_wage').insert(payload)
-        if (error) { setMsg({ type: 'error', text: error.message }); setSaving(false); return }
-      } else {
-        const { error } = await supabase.from('minimum_wage').update(payload).eq('id', id)
-        if (error) { setMsg({ type: 'error', text: error.message }); setSaving(false); return }
+    savingRef.current = true
+    try {
+      setSaving(true); setMsg(null)
+      for (const it of toSave) {
+        const { _dirty, id, ...payload } = it
+        if (id === null) {
+          const { error } = await supabase.from('minimum_wage').insert(payload)
+          if (error) { setMsg({ type: 'error', text: error.message }); return }
+        } else {
+          const { error } = await supabase.from('minimum_wage').update(payload).eq('id', id)
+          if (error) { setMsg({ type: 'error', text: error.message }); return }
+        }
       }
+      await touchSyncMeta()
+      setMsg({ type: 'success', text: '정상적으로 저장되었습니다.' })
+      load()
+    } catch (e) {
+      // supabase 호출이 에러 객체가 아니라 예외를 던지는 경우(네트워크 단절 등) — catch가
+      // 없으면 setMsg가 아예 호출되지 않아 성공/실패 어느 안내도 안 뜨고 saving 상태만
+      // 켜졌다 꺼지는 것처럼 보인다(2026-09-04 실제 재현 사례).
+      setMsg({ type: 'error', text: e?.message || String(e) })
+    } finally {
+      savingRef.current = false
+      setSaving(false)
     }
-    await touchSyncMeta()
-    setMsg({ type: 'success', text: '저장 완료' })
-    setSaving(false); load()
   }
 
   return (
@@ -725,7 +778,7 @@ function MinimumWageTab({ onDirtyChange }) {
           </button>
         </div>
       </div>
-      {msg && <div style={{ ...s.alert, ...(msg.type === 'error' ? s.alertError : s.alertOk), display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}><span>{msg.text}</span><button onClick={() => setMsg(null)} style={s.alertClose}>×</button></div>}
+      <MsgModal msg={msg} onClose={() => setMsg(null)} />
       {loading ? <div style={s.empty}>로딩 중…</div> : (
         <div style={{ overflowX: 'auto' }}>
           <table style={s.table}>
@@ -980,7 +1033,7 @@ function SimpleTaxSection() {
           <input ref={fileRef} type="file" accept=".xlsx" style={{ display: 'none' }} onChange={handleUpload} />
         </div>
       </div>
-      {msg && <div style={{ ...s.alert, ...(msg.type === 'error' ? s.alertError : s.alertOk), display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}><span>{msg.text}</span><button onClick={() => setMsg(null)} style={s.alertClose}>×</button></div>}
+      <MsgModal msg={msg} onClose={() => setMsg(null)} />
       {loading ? <div style={s.empty}>로딩 중…</div> : (
         <table style={s.table}>
           <thead>
@@ -1023,6 +1076,7 @@ function ExcessRateSection({ onDirtyChange }) {
   const [msg, setMsg]           = useState(null)
   const [uploading, setUploading] = useState(false)
   const fileRef = useRef(null)
+  const savingRef = useRef(false) // 저장 버튼 연타 방지(2026-09-04, CodeTab과 동일한 이유)
 
   const load = async () => {
     setLoading(true)
@@ -1067,24 +1121,36 @@ function ExcessRateSection({ onDirtyChange }) {
   }
 
   const handleSave = async () => {
+    if (savingRef.current) return
     const toSave = rows.filter(r => r._dirty)
     if (!toSave.length) return
-    setSaving(true); setMsg(null)
-    for (const r of toSave) {
-      const { _dirty, id, created_at, ...payload } = r
-      payload.threshold_from = Number(payload.threshold_from)
-      payload.threshold_to   = (payload.threshold_to === '' || payload.threshold_to == null) ? null : Number(payload.threshold_to)
-      payload.accumulated    = Number(payload.accumulated)
-      payload.factor         = Number(payload.factor)
-      payload.rate           = Number(payload.rate)
-      const { error } = id === null
-        ? await supabase.from('income_tax_excess_rate').insert(payload)
-        : await supabase.from('income_tax_excess_rate').update(payload).eq('id', id)
-      if (error) { setMsg({ type: 'error', text: error.message }); setSaving(false); return }
+    savingRef.current = true
+    try {
+      setSaving(true); setMsg(null)
+      for (const r of toSave) {
+        const { _dirty, id, created_at, ...payload } = r
+        payload.threshold_from = Number(payload.threshold_from)
+        payload.threshold_to   = (payload.threshold_to === '' || payload.threshold_to == null) ? null : Number(payload.threshold_to)
+        payload.accumulated    = Number(payload.accumulated)
+        payload.factor         = Number(payload.factor)
+        payload.rate           = Number(payload.rate)
+        const { error } = id === null
+          ? await supabase.from('income_tax_excess_rate').insert(payload)
+          : await supabase.from('income_tax_excess_rate').update(payload).eq('id', id)
+        if (error) { setMsg({ type: 'error', text: error.message }); return }
+      }
+      await touchSyncMeta()
+      setMsg({ type: 'success', text: `${toSave.length}건 정상적으로 저장되었습니다.` })
+      load()
+    } catch (e) {
+      // supabase 호출이 에러 객체가 아니라 예외를 던지는 경우(네트워크 단절 등) — catch가
+      // 없으면 setMsg가 아예 호출되지 않아 성공/실패 어느 안내도 안 뜨고 saving 상태만
+      // 켜졌다 꺼지는 것처럼 보인다(2026-09-04 실제 재현 사례).
+      setMsg({ type: 'error', text: e?.message || String(e) })
+    } finally {
+      savingRef.current = false
+      setSaving(false)
     }
-    await touchSyncMeta()
-    setMsg({ type: 'success', text: `${toSave.length}건 저장 완료` })
-    setSaving(false); load()
   }
 
   const downloadTemplate = () => {
@@ -1167,7 +1233,7 @@ function ExcessRateSection({ onDirtyChange }) {
           </button>
         </div>
       </div>
-      {msg && <div style={{ ...s.alert, ...(msg.type === 'error' ? s.alertError : s.alertOk), display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}><span>{msg.text}</span><button onClick={() => setMsg(null)} style={s.alertClose}>×</button></div>}
+      <MsgModal msg={msg} onClose={() => setMsg(null)} />
       {loading ? <div style={s.empty}>로딩 중…</div> : (
         <div style={{ overflowX: 'auto' }}>
           <table style={{ ...s.table, minWidth: 780 }}>
@@ -1238,6 +1304,7 @@ function HolidayTab({ onDirtyChange }) {
   const [yearList, setYearList] = useState([])
   const [uploading, setUploading] = useState(false)
   const fileRef = useRef(null)
+  const savingRef = useRef(false) // 저장 버튼 연타 방지(2026-09-04, CodeTab과 동일한 이유)
 
   const loadYears = async () => {
     const { data } = await supabase.from('holidays').select('year')
@@ -1302,23 +1369,35 @@ function HolidayTab({ onDirtyChange }) {
   }
 
   const handleSave = async () => {
+    if (savingRef.current) return
     const toSave = items.filter(it => it._dirty)
     if (!toSave.length) return
-    setSaving(true); setMsg(null)
-    for (const it of toSave) {
-      const { _dirty, id, ...payload } = it
-      if (!payload.holiday_name.trim()) continue
-      if (id === null) {
-        const { error } = await supabase.from('holidays').insert(payload)
-        if (error) { setMsg({ type: 'error', text: error.message }); setSaving(false); return }
-      } else {
-        const { error } = await supabase.from('holidays').update(payload).eq('id', id)
-        if (error) { setMsg({ type: 'error', text: error.message }); setSaving(false); return }
+    savingRef.current = true
+    try {
+      setSaving(true); setMsg(null)
+      for (const it of toSave) {
+        const { _dirty, id, ...payload } = it
+        if (!payload.holiday_name.trim()) continue
+        if (id === null) {
+          const { error } = await supabase.from('holidays').insert(payload)
+          if (error) { setMsg({ type: 'error', text: error.message }); return }
+        } else {
+          const { error } = await supabase.from('holidays').update(payload).eq('id', id)
+          if (error) { setMsg({ type: 'error', text: error.message }); return }
+        }
       }
+      await touchSyncMeta()
+      setMsg({ type: 'success', text: '정상적으로 저장되었습니다.' })
+      load()
+    } catch (e) {
+      // supabase 호출이 에러 객체가 아니라 예외를 던지는 경우(네트워크 단절 등) — catch가
+      // 없으면 setMsg가 아예 호출되지 않아 성공/실패 어느 안내도 안 뜨고 saving 상태만
+      // 켜졌다 꺼지는 것처럼 보인다(2026-09-04 실제 재현 사례).
+      setMsg({ type: 'error', text: e?.message || String(e) })
+    } finally {
+      savingRef.current = false
+      setSaving(false)
     }
-    await touchSyncMeta()
-    setMsg({ type: 'success', text: '저장 완료' })
-    setSaving(false); load()
   }
 
   const downloadTemplate = () => {
@@ -1386,7 +1465,7 @@ function HolidayTab({ onDirtyChange }) {
           </button>
         </div>
       </div>
-      {msg && <div style={{ ...s.alert, ...(msg.type === 'error' ? s.alertError : s.alertOk), display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}><span>{msg.text}</span><button onClick={() => setMsg(null)} style={s.alertClose}>×</button></div>}
+      <MsgModal msg={msg} onClose={() => setMsg(null)} />
       {loading ? <div style={s.empty}>로딩 중…</div> : (
         <table style={s.table}>
           <thead>
@@ -1884,6 +1963,7 @@ function LeaveRateTab({ onDirtyChange }) {
   const [saving,  setSaving]  = useState(false)
   const [dirty,   setDirty]   = useState(false)
   const [msg,     setMsg]     = useState(null)
+  const savingRef = useRef(false) // 저장 버튼 연타 방지(2026-09-04, CodeTab과 동일한 이유)
 
   const load = async () => {
     setLoading(true)
@@ -1927,22 +2007,34 @@ function LeaveRateTab({ onDirtyChange }) {
   }
 
   const handleSave = async () => {
+    if (savingRef.current) return
     const toSave = items.filter(it => it._dirty)
     if (!toSave.length) return
-    setSaving(true); setMsg(null)
-    for (const it of toSave) {
-      const { _dirty, id, ...payload } = it
-      if (id === null) {
-        const { error } = await supabase.from('gov_leave_benefit_rates').insert(payload)
-        if (error) { setMsg({ type: 'error', text: error.message }); setSaving(false); return }
-      } else {
-        const { error } = await supabase.from('gov_leave_benefit_rates').update(payload).eq('id', id)
-        if (error) { setMsg({ type: 'error', text: error.message }); setSaving(false); return }
+    savingRef.current = true
+    try {
+      setSaving(true); setMsg(null)
+      for (const it of toSave) {
+        const { _dirty, id, ...payload } = it
+        if (id === null) {
+          const { error } = await supabase.from('gov_leave_benefit_rates').insert(payload)
+          if (error) { setMsg({ type: 'error', text: error.message }); return }
+        } else {
+          const { error } = await supabase.from('gov_leave_benefit_rates').update(payload).eq('id', id)
+          if (error) { setMsg({ type: 'error', text: error.message }); return }
+        }
       }
+      await touchSyncMeta()
+      setMsg({ type: 'success', text: '정상적으로 저장되었습니다.' })
+      load()
+    } catch (e) {
+      // supabase 호출이 에러 객체가 아니라 예외를 던지는 경우(네트워크 단절 등) — catch가
+      // 없으면 setMsg가 아예 호출되지 않아 성공/실패 어느 안내도 안 뜨고 saving 상태만
+      // 켜졌다 꺼지는 것처럼 보인다(2026-09-04 실제 재현 사례).
+      setMsg({ type: 'error', text: e?.message || String(e) })
+    } finally {
+      savingRef.current = false
+      setSaving(false)
     }
-    await touchSyncMeta()
-    setMsg({ type: 'success', text: '저장 완료' })
-    setSaving(false); load()
   }
 
   const fmtAmt = v => (v != null && v !== '') ? Number(v).toLocaleString('ko-KR') : ''
@@ -1963,7 +2055,7 @@ function LeaveRateTab({ onDirtyChange }) {
           </button>
         </div>
       </div>
-      {msg && <div style={{ ...s.alert, ...(msg.type === 'error' ? s.alertError : s.alertOk), display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}><span>{msg.text}</span><button onClick={() => setMsg(null)} style={s.alertClose}>×</button></div>}
+      <MsgModal msg={msg} onClose={() => setMsg(null)} />
       <div style={{ fontSize: 12, color: '#64748B', marginBottom: 10 }}>
         ※ 급여율은 % 단위 (예: 100 = 100%, 80 = 80%) · 상한/하한은 월 원 단위
       </div>
@@ -2098,6 +2190,23 @@ const s = {
   alertOk:    { background: '#F0FDF4', border: '1px solid #BBF7D0', color: '#15803D' },
   alertError: { background: '#FEF2F2', border: '1px solid #FECACA', color: '#DC2626' },
   alertClose: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, lineHeight: 1, padding: '0 2px', color: 'inherit', opacity: 0.5, flexShrink: 0 },
+  msgModalOverlay: {
+    position: 'fixed', inset: 0, background: 'rgba(15,20,40,0.45)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 3000,
+  },
+  msgModalBox: {
+    background: '#fff', borderRadius: 14, padding: '30px 36px',
+    minWidth: 300, maxWidth: 440, textAlign: 'center',
+    boxShadow: '0 20px 60px rgba(0,0,0,0.25)',
+  },
+  msgModalBoxOk:    { border: '2px solid #BBF7D0' },
+  msgModalBoxError: { border: '2px solid #FECACA' },
+  msgModalIcon: { fontSize: 34, marginBottom: 10 },
+  msgModalText: { fontSize: 15, fontWeight: 600, color: '#1A2340', marginBottom: 20, lineHeight: 1.5, whiteSpace: 'pre-wrap' },
+  msgModalBtn: {
+    padding: '9px 28px', background: '#2563EB', color: '#fff', border: 'none',
+    borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: 'pointer',
+  },
   notice: {
     marginTop: 14, padding: '9px 14px', background: '#F8FAFC',
     border: '1px solid #E2E8F0', borderRadius: 8,

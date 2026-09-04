@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, Fragment } from 'react'
+import { useEffect, useState, useCallback, useRef, Fragment } from 'react'
 import { supabase } from '../lib/supabaseClient'
 
 // 시드 데이터 저장 성공 시 반드시 호출 — planner_seed_sync_meta.last_updated_at을 직접
@@ -12,6 +12,19 @@ async function touchSyncMeta() {
     .update({ last_updated_at: new Date().toISOString() })
     .eq('id', 1)
   if (error) console.error('[touchSyncMeta]', error.message)
+}
+
+// 저장 결과 안내(2026-09-04, SeedEditor.jsx의 MsgModal과 동일한 이유) — 토스트(인라인 알림
+// 박스)로는 "저장 완료" 메시지가 화면에서 순식간에 사라져(1~2프레임, 육안 인지 불가) 사용자가
+// 결과를 확인할 수 없었다. 리액트 렌더링에 아예 의존하지 않는 브라우저 네이티브 alert()로
+// 대체한다 — alert()는 동기 블로킹 호출이라 사용자가 직접 닫기 전까지 물리적으로 사라질 수 없다.
+function MsgModal({ msg, onClose }) {
+  useEffect(() => {
+    if (!msg) return
+    window.alert(msg.text)
+    onClose()
+  }, [msg])
+  return null
 }
 
 // Smart Planner+ 전용 참조/설정 데이터 편집기 — SeedEditor.jsx(Smart HR+ 전용)와는 완전히
@@ -181,6 +194,17 @@ const SECTIONS = [
 
 export default function PlannerSeedEditor() {
   const [mainTab, setMainTab] = useState('retire')
+  // 탭 전환 시 미저장 경고(2026-09-04, SeedEditor.jsx handleTabChange와 동일) — 원래 이 화면엔
+  // 이 가드가 아예 없어서, 저장 중/저장 직후 다른 탭을 클릭하면 편집 중이던 컴포넌트가 그대로
+  // 통째로 unmount되어(경고 없이) 진행 중이던 저장 결과 안내(alert)까지 함께 사라질 수 있었다.
+  const dirtyRef = useRef(false)
+  const handleTabChange = (t) => {
+    if (dirtyRef.current) {
+      if (!window.confirm('저장하지 않은 변경사항이 있습니다. 이동하시겠습니까?')) return
+    }
+    dirtyRef.current = false
+    setMainTab(t)
+  }
   return (
     <div>
       <h2 style={{ ...s.pageTitle, marginBottom: 4 }}>Seed 데이터 편집기 (Smart Planner+)</h2>
@@ -205,22 +229,22 @@ export default function PlannerSeedEditor() {
             {sec.tabs.map(t => (
               <button key={t.key} title={sec.title}
                 style={{ ...s.mainTab, ...(mainTab === t.key ? s.mainTabActive : {}) }}
-                onClick={() => setMainTab(t.key)}>{t.label}</button>
+                onClick={() => handleTabChange(t.key)}>{t.label}</button>
             ))}
           </div>
         ))}
       </div>
 
       <div style={{ marginTop: 16 }}>
-        {mainTab === 'retire'   && <TieredFieldsTab tiers={RETIRE_TIERS} rows={RETIRE_ROWS} tables={RETIRE_TABLES} />}
-        {mainTab === 'wed'      && <TieredFieldsTab tiers={WED_TIERS}    rows={WED_ROWS}    tables={WED_TABLES} />}
-        {mainTab === 'edu'      && <EduDefaultsTab />}
-        {mainTab === 'rate'     && <RateDefaultsTab />}
-        {mainTab === 'refcodes' && <CodeNamesTab />}
-        {mainTab === 'sysmisc'  && <SysConfigMiscTab />}
+        {mainTab === 'retire'   && <TieredFieldsTab tiers={RETIRE_TIERS} rows={RETIRE_ROWS} tables={RETIRE_TABLES} onDirtyChange={v => { dirtyRef.current = v }} />}
+        {mainTab === 'wed'      && <TieredFieldsTab tiers={WED_TIERS}    rows={WED_ROWS}    tables={WED_TABLES} onDirtyChange={v => { dirtyRef.current = v }} />}
+        {mainTab === 'edu'      && <EduDefaultsTab onDirtyChange={v => { dirtyRef.current = v }} />}
+        {mainTab === 'rate'     && <RateDefaultsTab onDirtyChange={v => { dirtyRef.current = v }} />}
+        {mainTab === 'refcodes' && <CodeNamesTab onDirtyChange={v => { dirtyRef.current = v }} />}
+        {mainTab === 'sysmisc'  && <SysConfigMiscTab onDirtyChange={v => { dirtyRef.current = v }} />}
         {(mainTab === 'pension_std' || mainTab === 'pension_rev') && (() => {
           const cfg = SECTIONS[1].tabs.find(t => t.key === mainTab)
-          return <SimpleTableTab key={cfg.table} table={cfg.table} pk={cfg.pk} columns={cfg.columns} />
+          return <SimpleTableTab key={cfg.table} table={cfg.table} pk={cfg.pk} columns={cfg.columns} onDirtyChange={v => { dirtyRef.current = v }} />
         })()}
       </div>
     </div>
@@ -228,16 +252,19 @@ export default function PlannerSeedEditor() {
 }
 
 // ─── 시스템코드 탭 (planner_code_names, 복합키 cd_fld_nm+cd_val) ──────────────
-function CodeNamesTab() {
+function CodeNamesTab({ onDirtyChange }) {
   const [groupCode, setGroupCode] = useState(CODE_GROUPS[0].code)
   const [items, setItems]         = useState([])
   const [dirty, setDirty]         = useState(false)
   const [loading, setLoading]     = useState(true)
   const [saving, setSaving]       = useState(false)
   const [msg, setMsg]             = useState(null)
+  const savingRef = useRef(false) // 저장 버튼 연타 방지(2026-09-04, SeedEditor.jsx CodeTab과 동일)
+
+  useEffect(() => { onDirtyChange?.(dirty) }, [dirty])
 
   const load = useCallback(async () => {
-    setLoading(true); setMsg(null)
+    setLoading(true)
     const { data, error } = await supabase
       .from('planner_code_names').select('*')
       .eq('cd_fld_nm', groupCode)
@@ -271,33 +298,44 @@ function CodeNamesTab() {
   }
 
   const handleSave = async () => {
+    if (savingRef.current) return
     const toSave = items.filter(it => it._dirty)
     if (!toSave.length) return
-    setSaving(true); setMsg(null)
-    for (const it of toSave) {
-      const payload = {
-        cd_fld_nm: groupCode,
-        cd_val: (it.cd_val || '').trim(),
-        cd_nm: (it.cd_nm || '').trim(),
-        parent_cd_val: it.parent_cd_val || null,
-        is_fixed: !!it.is_fixed,
-        is_auto_link: !!it.is_auto_link,
-        tooltip: it.tooltip || null,
-        ratio_role: it.ratio_role || null,
+    savingRef.current = true
+    try {
+      setSaving(true); setMsg(null)
+      for (const it of toSave) {
+        const payload = {
+          cd_fld_nm: groupCode,
+          cd_val: (it.cd_val || '').trim(),
+          cd_nm: (it.cd_nm || '').trim(),
+          parent_cd_val: it.parent_cd_val || null,
+          is_fixed: !!it.is_fixed,
+          is_auto_link: !!it.is_auto_link,
+          tooltip: it.tooltip || null,
+          ratio_role: it.ratio_role || null,
+        }
+        if (!payload.cd_val || !payload.cd_nm) continue
+        if (!it._pk) {
+          const { error } = await supabase.from('planner_code_names').insert(payload)
+          if (error) { setMsg({ type: 'error', text: error.message }); return }
+        } else {
+          const { error } = await supabase.from('planner_code_names').update(payload).match(it._pk)
+          if (error) { setMsg({ type: 'error', text: error.message }); return }
+        }
       }
-      if (!payload.cd_val || !payload.cd_nm) continue
-      if (!it._pk) {
-        const { error } = await supabase.from('planner_code_names').insert(payload)
-        if (error) { setMsg({ type: 'error', text: error.message }); setSaving(false); return }
-      } else {
-        const { error } = await supabase.from('planner_code_names').update(payload).match(it._pk)
-        if (error) { setMsg({ type: 'error', text: error.message }); setSaving(false); return }
-      }
+      setMsg({ type: 'success', text: '정상적으로 저장되었습니다.' })
+      touchSyncMeta()
+      load()
+    } catch (e) {
+      // supabase 호출이 에러 객체가 아니라 예외를 던지는 경우(네트워크 단절 등) — catch가
+      // 없으면 setMsg가 아예 호출되지 않아 성공/실패 어느 안내도 안 뜨고 saving 상태만
+      // 켜졌다 꺼지는 것처럼 보인다(2026-09-04 실제 재현 사례).
+      setMsg({ type: 'error', text: e?.message || String(e) })
+    } finally {
+      savingRef.current = false
+      setSaving(false)
     }
-    setMsg({ type: 'success', text: '저장 완료' })
-    touchSyncMeta()
-    setSaving(false)
-    load()
   }
 
   return (
@@ -328,12 +366,7 @@ function CodeNamesTab() {
             </button>
           </div>
         </div>
-        {msg && (
-          <div style={{ ...s.alert, ...(msg.type === 'error' ? s.alertError : s.alertOk), display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span>{msg.text}</span>
-            <button onClick={() => setMsg(null)} style={s.alertClose}>×</button>
-          </div>
-        )}
+        <MsgModal msg={msg} onClose={() => setMsg(null)} />
         {loading ? <div style={s.empty}>로딩 중…</div> : (() => {
           const hierarchical = HIERARCHICAL_GROUPS.has(groupCode)
           const parentOptions = items.filter(it => !it.parent_cd_val && it.cd_val)
@@ -420,18 +453,21 @@ function flattenRow(row) {
 
 // ─── 필드=행, 단계=열 편집기 (은퇴/결혼 공용 — 실제 화면의 "시스템값" 레이아웃) ──
 // "여행/외식/골프"처럼 횟수+회당비용을 한 셀에 같이 보여줘야 하는 행은 type:'pair'로 표시.
-function TieredFieldsTab({ tiers, rows, tables }) {
+function TieredFieldsTab({ tiers, rows, tables, onDirtyChange }) {
   const [values, setValues]   = useState({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving]   = useState(false)
   const [dirty, setDirty]     = useState(false)
   const [msg, setMsg]         = useState(null)
+  const savingRef = useRef(false) // 저장 버튼 연타 방지(2026-09-04, SeedEditor.jsx CodeTab과 동일)
+
+  useEffect(() => { onDirtyChange?.(dirty) }, [dirty])
 
   const tableEntries = Object.entries(tables)
   const flatFields = rows.flatMap(flattenRow)
 
   const load = useCallback(async () => {
-    setLoading(true); setMsg(null)
+    setLoading(true)
     const results = await Promise.all(tableEntries.map(([, t]) => supabase.from(t.name).select('*')))
     const errored = results.find(r => r.error)
     if (errored) { setMsg({ type: 'error', text: errored.error.message }); setLoading(false); return }
@@ -461,25 +497,39 @@ function TieredFieldsTab({ tiers, rows, tables }) {
   }
 
   const handleSave = async () => {
-    setSaving(true); setMsg(null)
-    for (const t of tiers) {
-      const v = values[t.key] || {}
-      for (const [tableKey, tinfo] of tableEntries) {
-        const payload = { [tinfo.pk]: t.key }
-        let any = false
-        for (const f of flatFields.filter(fl => fl.table === tableKey)) {
-          payload[f.key] = Number(v[f.key] || 0)
-          any = true
+    if (savingRef.current) return
+    savingRef.current = true
+    try {
+      setSaving(true); setMsg(null)
+      const upserts = []
+      for (const t of tiers) {
+        const v = values[t.key] || {}
+        for (const [tableKey, tinfo] of tableEntries) {
+          const payload = { [tinfo.pk]: t.key }
+          let any = false
+          for (const f of flatFields.filter(fl => fl.table === tableKey)) {
+            payload[f.key] = Number(v[f.key] || 0)
+            any = true
+          }
+          if (!any) continue
+          upserts.push(supabase.from(tinfo.name).upsert(payload, { onConflict: tinfo.pk }))
         }
-        if (!any) continue
-        const { error } = await supabase.from(tinfo.name).upsert(payload, { onConflict: tinfo.pk })
-        if (error) { setMsg({ type: 'error', text: error.message }); setSaving(false); return }
       }
+      const results = await Promise.all(upserts)
+      const errored = results.find(r => r.error)
+      if (errored) { setMsg({ type: 'error', text: errored.error.message }); return }
+      setMsg({ type: 'success', text: '정상적으로 저장되었습니다.' })
+      touchSyncMeta()
+      load()
+    } catch (e) {
+      // supabase 호출이 에러 객체가 아니라 예외를 던지는 경우(네트워크 단절 등) — catch가
+      // 없으면 setMsg가 아예 호출되지 않아 성공/실패 어느 안내도 안 뜨고 saving 상태만
+      // 켜졌다 꺼지는 것처럼 보인다(2026-09-04 실제 재현 사례).
+      setMsg({ type: 'error', text: e?.message || String(e) })
+    } finally {
+      savingRef.current = false
+      setSaving(false)
     }
-    setMsg({ type: 'success', text: '저장 완료' })
-    touchSyncMeta()
-    setSaving(false)
-    load()
   }
 
   return (
@@ -493,12 +543,7 @@ function TieredFieldsTab({ tiers, rows, tables }) {
           </button>
         </div>
       </div>
-      {msg && (
-        <div style={{ ...s.alert, ...(msg.type === 'error' ? s.alertError : s.alertOk), display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span>{msg.text}</span>
-          <button onClick={() => setMsg(null)} style={s.alertClose}>×</button>
-        </div>
-      )}
+      <MsgModal msg={msg} onClose={() => setMsg(null)} />
       {loading ? <div style={s.empty}>로딩 중…</div> : (
         <div style={{ overflowX: 'auto' }}>
           <table style={s.table}>
@@ -546,15 +591,18 @@ function TieredFieldsTab({ tiers, rows, tables }) {
 }
 
 // ─── 교육 탭 (edu_level_defaults, 고정 14개 코드 × 값 1개) ─────────────────────
-function EduDefaultsTab() {
+function EduDefaultsTab({ onDirtyChange }) {
   const [values, setValues]   = useState({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving]   = useState(false)
   const [dirty, setDirty]     = useState(false)
   const [msg, setMsg]         = useState(null)
+  const savingRef = useRef(false) // 저장 버튼 연타 방지(2026-09-04, SeedEditor.jsx CodeTab과 동일)
+
+  useEffect(() => { onDirtyChange?.(dirty) }, [dirty])
 
   const load = useCallback(async () => {
-    setLoading(true); setMsg(null)
+    setLoading(true)
     const { data, error } = await supabase.from('planner_edu_level_defaults').select('*')
     if (error) { setMsg({ type: 'error', text: error.message }); setLoading(false); return }
     const next = {}
@@ -570,16 +618,27 @@ function EduDefaultsTab() {
   }
 
   const handleSave = async () => {
-    setSaving(true); setMsg(null)
-    for (const row of EDU_ROWS) {
-      const { error } = await supabase.from('planner_edu_level_defaults')
-        .upsert({ edu_lvl_tp: row.code, req_amt: Number(values[row.code] || 0) }, { onConflict: 'edu_lvl_tp' })
-      if (error) { setMsg({ type: 'error', text: error.message }); setSaving(false); return }
+    if (savingRef.current) return
+    savingRef.current = true
+    try {
+      setSaving(true); setMsg(null)
+      for (const row of EDU_ROWS) {
+        const { error } = await supabase.from('planner_edu_level_defaults')
+          .upsert({ edu_lvl_tp: row.code, req_amt: Number(values[row.code] || 0) }, { onConflict: 'edu_lvl_tp' })
+        if (error) { setMsg({ type: 'error', text: error.message }); return }
+      }
+      setMsg({ type: 'success', text: '정상적으로 저장되었습니다.' })
+      touchSyncMeta()
+      load()
+    } catch (e) {
+      // supabase 호출이 에러 객체가 아니라 예외를 던지는 경우(네트워크 단절 등) — catch가
+      // 없으면 setMsg가 아예 호출되지 않아 성공/실패 어느 안내도 안 뜨고 saving 상태만
+      // 켜졌다 꺼지는 것처럼 보인다(2026-09-04 실제 재현 사례).
+      setMsg({ type: 'error', text: e?.message || String(e) })
+    } finally {
+      savingRef.current = false
+      setSaving(false)
     }
-    setMsg({ type: 'success', text: '저장 완료' })
-    touchSyncMeta()
-    setSaving(false)
-    load()
   }
 
   return (
@@ -593,12 +652,7 @@ function EduDefaultsTab() {
           </button>
         </div>
       </div>
-      {msg && (
-        <div style={{ ...s.alert, ...(msg.type === 'error' ? s.alertError : s.alertOk), display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span>{msg.text}</span>
-          <button onClick={() => setMsg(null)} style={s.alertClose}>×</button>
-        </div>
-      )}
+      <MsgModal msg={msg} onClose={() => setMsg(null)} />
       {loading ? <div style={s.empty}>로딩 중…</div> : (
         <table style={{ ...s.table, maxWidth: 420 }}>
           <thead>
@@ -626,15 +680,18 @@ function EduDefaultsTab() {
 }
 
 // ─── 상승률 탭 (planner_system_config, 고정 키 3개) ────────────────────────────
-function RateDefaultsTab() {
+function RateDefaultsTab({ onDirtyChange }) {
   const [values, setValues]   = useState({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving]   = useState(false)
   const [dirty, setDirty]     = useState(false)
   const [msg, setMsg]         = useState(null)
+  const savingRef = useRef(false) // 저장 버튼 연타 방지(2026-09-04, SeedEditor.jsx CodeTab과 동일)
+
+  useEffect(() => { onDirtyChange?.(dirty) }, [dirty])
 
   const load = useCallback(async () => {
-    setLoading(true); setMsg(null)
+    setLoading(true)
     const { data, error } = await supabase.from('planner_system_config')
       .select('*').in('key', RATE_ROWS.map(r => r.key))
     if (error) { setMsg({ type: 'error', text: error.message }); setLoading(false); return }
@@ -646,20 +703,31 @@ function RateDefaultsTab() {
   useEffect(() => { load() }, [load])
 
   const handleSave = async () => {
-    setSaving(true); setMsg(null)
-    for (const row of RATE_ROWS) {
-      const { error } = await supabase.from('planner_system_config').upsert({
-        key: row.key,
-        value: (values[row.key] ?? '').toString(),
-        description: row.label,
-        updated_at: new Date().toISOString(),
-      }, { onConflict: 'key' })
-      if (error) { setMsg({ type: 'error', text: error.message }); setSaving(false); return }
+    if (savingRef.current) return
+    savingRef.current = true
+    try {
+      setSaving(true); setMsg(null)
+      for (const row of RATE_ROWS) {
+        const { error } = await supabase.from('planner_system_config').upsert({
+          key: row.key,
+          value: (values[row.key] ?? '').toString(),
+          description: row.label,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'key' })
+        if (error) { setMsg({ type: 'error', text: error.message }); return }
+      }
+      setMsg({ type: 'success', text: '정상적으로 저장되었습니다.' })
+      touchSyncMeta()
+      load()
+    } catch (e) {
+      // supabase 호출이 에러 객체가 아니라 예외를 던지는 경우(네트워크 단절 등) — catch가
+      // 없으면 setMsg가 아예 호출되지 않아 성공/실패 어느 안내도 안 뜨고 saving 상태만
+      // 켜졌다 꺼지는 것처럼 보인다(2026-09-04 실제 재현 사례).
+      setMsg({ type: 'error', text: e?.message || String(e) })
+    } finally {
+      savingRef.current = false
+      setSaving(false)
     }
-    setMsg({ type: 'success', text: '저장 완료' })
-    touchSyncMeta()
-    setSaving(false)
-    load()
   }
 
   return (
@@ -673,12 +741,7 @@ function RateDefaultsTab() {
           </button>
         </div>
       </div>
-      {msg && (
-        <div style={{ ...s.alert, ...(msg.type === 'error' ? s.alertError : s.alertOk), display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span>{msg.text}</span>
-          <button onClick={() => setMsg(null)} style={s.alertClose}>×</button>
-        </div>
-      )}
+      <MsgModal msg={msg} onClose={() => setMsg(null)} />
       {loading ? <div style={s.empty}>로딩 중…</div> : (
         <table style={{ ...s.table, maxWidth: 420 }}>
           <thead>
@@ -702,7 +765,7 @@ function RateDefaultsTab() {
 }
 
 // ─── 기타 설정값 탭 (planner_system_config 중 "상승률" 3개 키를 제외한 나머지) ──
-function SysConfigMiscTab() {
+function SysConfigMiscTab({ onDirtyChange }) {
   const excludeKeys = RATE_ROWS.map(r => r.key)
   return (
     <>
@@ -719,21 +782,25 @@ function SysConfigMiscTab() {
           { key: 'description', label: '설명', type: 'text' },
         ]}
         excludeFilter={q => q.not('key', 'in', `(${excludeKeys.join(',')})`)}
+        onDirtyChange={onDirtyChange}
       />
     </>
   )
 }
 
 // ─── 자연키 기반 공용 편집기(코드/값 나열형 테이블) ────────────────────────────
-function SimpleTableTab({ table, pk, columns, excludeFilter }) {
+function SimpleTableTab({ table, pk, columns, excludeFilter, onDirtyChange }) {
   const [items, setItems]     = useState([])
   const [dirty, setDirty]     = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving]   = useState(false)
   const [msg, setMsg]         = useState(null)
+  const savingRef = useRef(false) // 저장 버튼 연타 방지(2026-09-04, SeedEditor.jsx CodeTab과 동일)
+
+  useEffect(() => { onDirtyChange?.(dirty) }, [dirty])
 
   const load = useCallback(async () => {
-    setLoading(true); setMsg(null)
+    setLoading(true)
     let q = supabase.from(table).select('*')
     if (excludeFilter) q = excludeFilter(q)
     const { data, error } = await q
@@ -767,26 +834,37 @@ function SimpleTableTab({ table, pk, columns, excludeFilter }) {
   }
 
   const handleSave = async () => {
+    if (savingRef.current) return
     const toSave = items.filter(it => it._dirty)
     if (!toSave.length) return
-    setSaving(true); setMsg(null)
-    for (const it of toSave) {
-      const payload = Object.fromEntries(columns.map(c => [
-        c.key,
-        c.type === 'number' ? Number(it[c.key] || 0) : (it[c.key] ?? '').toString(),
-      ]))
-      if (!it._pk) {
-        const { error } = await supabase.from(table).insert(payload)
-        if (error) { setMsg({ type: 'error', text: error.message }); setSaving(false); return }
-      } else {
-        const { error } = await supabase.from(table).update(payload).match(it._pk)
-        if (error) { setMsg({ type: 'error', text: error.message }); setSaving(false); return }
+    savingRef.current = true
+    try {
+      setSaving(true); setMsg(null)
+      for (const it of toSave) {
+        const payload = Object.fromEntries(columns.map(c => [
+          c.key,
+          c.type === 'number' ? Number(it[c.key] || 0) : (it[c.key] ?? '').toString(),
+        ]))
+        if (!it._pk) {
+          const { error } = await supabase.from(table).insert(payload)
+          if (error) { setMsg({ type: 'error', text: error.message }); return }
+        } else {
+          const { error } = await supabase.from(table).update(payload).match(it._pk)
+          if (error) { setMsg({ type: 'error', text: error.message }); return }
+        }
       }
+      setMsg({ type: 'success', text: '정상적으로 저장되었습니다.' })
+      touchSyncMeta()
+      load()
+    } catch (e) {
+      // supabase 호출이 에러 객체가 아니라 예외를 던지는 경우(네트워크 단절 등) — catch가
+      // 없으면 setMsg가 아예 호출되지 않아 성공/실패 어느 안내도 안 뜨고 saving 상태만
+      // 켜졌다 꺼지는 것처럼 보인다(2026-09-04 실제 재현 사례).
+      setMsg({ type: 'error', text: e?.message || String(e) })
+    } finally {
+      savingRef.current = false
+      setSaving(false)
     }
-    setMsg({ type: 'success', text: '저장 완료' })
-    touchSyncMeta()
-    setSaving(false)
-    load()
   }
 
   return (
@@ -804,12 +882,7 @@ function SimpleTableTab({ table, pk, columns, excludeFilter }) {
           </button>
         </div>
       </div>
-      {msg && (
-        <div style={{ ...s.alert, ...(msg.type === 'error' ? s.alertError : s.alertOk), display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span>{msg.text}</span>
-          <button onClick={() => setMsg(null)} style={s.alertClose}>×</button>
-        </div>
-      )}
+      <MsgModal msg={msg} onClose={() => setMsg(null)} />
       {loading ? <div style={s.empty}>로딩 중…</div> : (
         <div style={{ overflowX: 'auto' }}>
           <table style={s.table}>
