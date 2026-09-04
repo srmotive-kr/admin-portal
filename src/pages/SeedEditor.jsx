@@ -29,6 +29,23 @@ function xlDateToStr(v) {
   return String(v ?? '').trim()
 }
 
+// Supabase 테이블 전체 조회(1000행 페이지네이션) — "실시간 데이터 다운로드" 전용.
+// PostgREST 기본 최대 반환 건수(1000)를 넘는 테이블(예: 근로소득세액표)도 끝까지 받아온다.
+async function fetchAllRows(table, { orderCol } = {}) {
+  const PAGE = 1000
+  let from = 0, all = []
+  while (true) {
+    let q = supabase.from(table).select('*')
+    if (orderCol) q = q.order(orderCol, { ascending: true })
+    const { data, error } = await q.range(from, from + PAGE - 1)
+    if (error) throw error
+    all = all.concat(data || [])
+    if (!data || data.length < PAGE) break
+    from += PAGE
+  }
+  return all
+}
+
 // ─── 코드 그룹 정의 ───────────────────────────────────────────────────────
 const CODE_GROUPS = [
   { code: 'RANK',          label: '직책명',         hasTaxable: false, hasOrdinary: false },
@@ -1562,17 +1579,27 @@ function parseWorkbook(wb) {
         is_system_default: r[ci('시스템기본')] === 'Y' ? 1 : 0,
         taxable_yn: ci('과세여부') >= 0 ? (r[ci('과세여부')] || 'N') : 'N',
         ordinary_yn: ci('통상임금포함') >= 0 ? (r[ci('통상임금포함')] || 'Y') : 'Y',
+        // 정산전용/설명/사용처/유사어/메모 — 예전(이 컬럼 추가 이전) 양식으로 업로드해도 깨지지
+        // 않도록 컬럼이 없으면 안전한 기본값으로 둔다(정산전용=N, 나머지는 빈 값).
+        is_settle_code:  ci('정산전용') >= 0 ? (r[ci('정산전용')] === 'Y' ? 1 : 0) : 0,
+        description:     ci('설명')   >= 0 ? (r[ci('설명')]   || null) : null,
+        usage_location:  ci('사용처') >= 0 ? (r[ci('사용처')] || null) : null,
+        synonyms:        ci('유사어') >= 0 ? (r[ci('유사어')] || null) : null,
+        memo:            ci('메모')   >= 0 ? (r[ci('메모')]   || null) : null,
       })
     }
   }
 
   if (wb.SheetNames.includes('보험요율')) {
     const rows = XLSX.utils.sheet_to_json(wb.Sheets['보험요율'], { header: 1 })
-    const header = rows[1] || []
+    // 보험요율 시트는 제목행 없이 1행=헤더, 2행부터=데이터(코드/공휴일 시트와 달리 title 행이 없음) —
+    // 예전엔 여기서 rows[1](데이터 첫 행)을 헤더로 잘못 읽어 컬럼 매칭이 전부 실패, 업로드시 보험요율만
+    // 항상 0건으로 파싱되던 버그였다(실시간 다운로드→재업로드 라운드트립 검증 중 실제로 재현/확인, 2026-09-04).
+    const header = rows[0] || []
     const ci = k => header.indexOf(k)
     const safeN = (v, def = 0) => { const n = Number(v ?? def); return isNaN(n) ? def : n }
     const toYM  = v => { if (!v) return null; return String(v).trim().slice(0, 7) }
-    for (let i = 2; i < rows.length; i++) {
+    for (let i = 1; i < rows.length; i++) {
       const r = rows[i]
       if (!r[ci('연도')]) continue
       insurance.push({
@@ -1670,6 +1697,7 @@ function BulkUploadModal({ onClose }) {
   const [preview, setPreview]     = useState(null)
   const [importing, setImporting] = useState(false)
   const [progress, setProgress]   = useState('')
+  const [exporting, setExporting] = useState(false)
   const [msg, setMsg]             = useState(null)
   const [done, setDone]           = useState(false)
   const fileRef = useRef(null)
@@ -1687,134 +1715,110 @@ function BulkUploadModal({ onClose }) {
     }
   }
 
-  const downloadBulkTemplate = () => {
-    const today = new Date().toISOString().slice(0, 10)
-    const year  = new Date().getFullYear()
-    const wb2 = XLSX.utils.book_new()
+  // 실시간 데이터 다운로드 — Supabase의 현재 seed 데이터를 그대로 xlsx로 내려받는다.
+  // parseWorkbook()이 읽는 시트명/헤더 순서와 정확히 동일하게 맞춰서, 그대로 다시
+  // 업로드하면 지금 상태를 그대로 복원(전체 백업/롤백 용도)할 수 있게 한다.
+  const exportLiveData = async () => {
+    if (exporting) return
+    setExporting(true); setMsg(null)
+    try {
+      const today = new Date().toISOString().slice(0, 10)
+      const wb2 = XLSX.utils.book_new()
 
-    // ── 코드 시트 (파서: 행0=[GROUP_CODE] 시트명, 행1=헤더, 행2+=데이터) ──
-    const codeBase = ['코드', '코드명', '순서', '사용여부', '시스템기본']
-    const codeTax  = [...codeBase, '과세여부']
-    const codeOrd  = [...codeTax,  '통상임금포함']
-    const mkCode = (groupCode, sheetName, headers, rows) =>
-      XLSX.utils.book_append_sheet(wb2,
-        XLSX.utils.aoa_to_sheet([[`[${groupCode}] ${sheetName}`], headers, ...rows]),
-        sheetName)
+      // ── 코드 시트 (파서: 행0=[GROUP_CODE] 시트명, 행1=헤더, 행2+=데이터) ──
+      // 정산전용/설명/사용처/유사어/메모는 모든 그룹에 공통으로 끝에 붙인다 — 다운로드→수정→
+      // 재업로드를 그대로 반복 사용할 예정이라(2026-09-04, 사용자 확정), seed_codes_smart_hr_plus의
+      // 모든 컬럼을 빠짐없이 왕복시켜야 한다. 특히 정산전용(is_settle_code)이 빠지면 재업로드 시
+      // 991~999 같은 정산 전용 코드가 초기화되어 스마트HR+ 코드관리 화면에 노출되는 사고로 이어진다.
+      setProgress('코드 불러오는 중…')
+      const codeBase = ['코드', '코드명', '순서', '사용여부', '시스템기본']
+      const codeTax  = [...codeBase, '과세여부']
+      const codeOrd  = [...codeTax,  '통상임금포함']
+      const codeExtra = ['정산전용', '설명', '사용처', '유사어', '메모']
+      const allCodes = await fetchAllRows('seed_codes_smart_hr_plus')
+      for (const grp of CODE_GROUPS) {
+        const rows = allCodes
+          .filter(r => r.group_code === grp.code)
+          .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+        const headers = [...(grp.hasOrdinary ? codeOrd : grp.hasTaxable ? codeTax : codeBase), ...codeExtra]
+        const dataRows = rows.map(r => {
+          const row = [r.code, r.name, r.sort_order ?? 0, r.use_yn || 'Y', r.is_system_default ? 'Y' : 'N']
+          if (grp.hasTaxable)  row.push(r.taxable_yn || 'N')
+          if (grp.hasOrdinary) row.push(r.ordinary_yn || 'Y')
+          row.push(r.is_settle_code ? 'Y' : 'N', r.description || '', r.usage_location || '', r.synonyms || '', r.memo || '')
+          return row
+        })
+        // 시트명에 xlsx 금지문자(: \ / ? * [ ])가 들어가면 저장이 실패한다 — 라벨에 '/'가
+        // 있는 외출/조퇴구분 그룹에서 실제로 재현됨(2026-09-04). CODE_SHEETS 원래 표기(외출조퇴구분)와
+        // 맞추기 위해서라도 제거가 맞다 — parseWorkbook()이 그 이름으로 시트를 찾는다.
+        const sheetName = grp.label.replace(/[:\\/?*[\]]/g, '')
+        XLSX.utils.book_append_sheet(wb2,
+          XLSX.utils.aoa_to_sheet([[`[${grp.code}] ${grp.label}`], headers, ...dataRows]),
+          sheetName)
+      }
 
-    mkCode('RANK', '직책명', codeBase, [
-      ['10','회장',10,'Y','N'],['20','부회장',20,'Y','N'],['30','대표이사',30,'Y','Y'],
-      ['40','대표',40,'Y','Y'],['50','본부장',50,'Y','N'],['60','실장',60,'Y','N'],
-      ['70','팀장',70,'Y','N'],['80','부장',80,'Y','N'],['90','파트장',90,'Y','N'],
-      ['100','반장',100,'Y','N'],['110','조장',110,'Y','N'],
-    ])
-    mkCode('POS', '직위명', codeBase, [
-      ['10','회장',10,'Y','N'],['20','부회장',20,'Y','N'],['30','사장',30,'Y','N'],
-      ['40','부사장',40,'Y','N'],['50','전무이사',50,'Y','N'],['60','상무이사',60,'Y','N'],
-      ['70','이사',70,'Y','N'],['80','이사대우',80,'Y','N'],['90','부장',90,'Y','N'],
-      ['100','차장',100,'Y','N'],['110','과장',110,'Y','N'],['120','대리',120,'Y','N'],
-      ['130','사원',130,'Y','N'],['140','수석연구원',140,'Y','N'],
-      ['150','책임연구원',150,'Y','N'],['160','선임연구원',160,'Y','N'],['170','주임',170,'Y','N'],
-    ])
-    mkCode('EMP_TYPE', '고용형태구분', codeBase, [
-      ['10','정규직',10,'Y','N'],['20','계약직',20,'Y','N'],
-      ['30','파견직',30,'Y','N'],['40','인턴',40,'Y','N'],
-    ])
-    mkCode('ASSIGN_TYPE', '발령구분', codeBase, [
-      ['10','승진',10,'Y','N'],['20','전보',20,'Y','N'],['30','겸직',30,'Y','Y'],
-      ['40','겸직해제',40,'Y','Y'],['50','파견',50,'Y','N'],['60','정직',60,'Y','N'],
-      ['70','복직',70,'Y','N'],['80','대기발령',80,'Y','N'],
-      ['90','강등',90,'Y','N'],['100','감봉',100,'Y','N'],
-    ])
-    mkCode('JOB', '업무구분', codeBase, [
-      ['10','개발',10,'Y','N'],['20','기획',20,'Y','N'],['30','영업',30,'Y','N'],
-      ['40','관리',40,'Y','N'],['50','디자인',50,'Y','N'],['60','생산',60,'Y','N'],
-    ])
-    mkCode('SALARY_TYPE', '급여구분', codeBase, [
-      ['10','연봉',10,'Y','Y'],['20','월급',20,'Y','Y'],['30','시급',30,'Y','Y'],
-    ])
-    mkCode('ALLOWANCE', '수당구분', codeOrd, [
-      ['10','약정연장수당',10,'Y','Y','Y','Y'],['20','약정휴일수당',20,'Y','Y','Y','Y'],
-      ['30','직책수당',30,'Y','N','Y','Y'],['40','직무수당',40,'Y','N','Y','Y'],
-      ['50','연월차수당',50,'Y','N','Y','Y'],['60','성과급',60,'Y','N','Y','Y'],
-      ['90','기타수당',90,'Y','Y','Y','Y'],['91','식대',91,'Y','Y','N','N'],
-      ['92','교통비',92,'Y','Y','N','N'],['99','기타비과세수당',99,'Y','N','N','N'],
-      ['991','연월차정산',991,'Y','Y','Y','N'],['992','보상휴가정산',992,'Y','Y','Y','N'],
-      ['993','연말정산소득세',993,'Y','Y','N','N'],['994','연말정산지방소득세',994,'Y','Y','N','N'],
-      ['995','건강보험료정산',995,'Y','Y','N','N'],['996','고용보험료정산',996,'Y','Y','N','N'],
-      ['997','교대근무정산',997,'Y','Y','Y','Y'],
-      ['999','급여소급정산',999,'Y','Y','Y','N'],
-    ])
-    mkCode('BONUS_TYPE', '상여금구분', codeBase, [
-      ['10','정기상여',10,'Y','N'],['20','성과급',20,'Y','N'],
-      ['30','명절상여',30,'Y','N'],['40','특별상여',40,'Y','N'],
-    ])
-    mkCode('LEAVE_TYPE', '휴가구분', codeTax, [
-      ['10','연차',10,'Y','Y','Y'],['20','월차',20,'Y','Y','Y'],
-      ['30','반차(오전)',30,'Y','Y','Y'],['31','반차(오후)',31,'Y','Y','Y'],
-      ['40','보상휴가',40,'Y','Y','Y'],['41','보상휴가(반차/오전)',41,'Y','Y','Y'],
-      ['42','보상휴가(반차/오후)',42,'Y','Y','Y'],
-      ['50','출산전후휴가(90일)',50,'Y','Y','Y'],
-      ['51','출산전후휴가(쌍둥이120일)',51,'Y','Y','Y'],
-      ['52','배우자출산휴가(20일)',52,'Y','Y','Y'],['53','육아휴직',53,'Y','Y','Y'],
-      ['59','개인휴직',59,'Y','Y','N'],
-      ['60','병가',60,'Y','N','Y'],['70','경조사',70,'Y','N','Y'],
-      ['80','공가',80,'Y','N','Y'],['90','무급휴가',90,'Y','N','N'],
-    ])
-    mkCode('OUTING_TYPE', '외출조퇴구분', codeTax, [
-      ['10','외출',10,'Y','Y','N'],['11','외출(유급)',11,'Y','Y','Y'],
-      ['20','조퇴',20,'Y','Y','N'],['21','조퇴(유급)',21,'Y','Y','Y'],
-      ['30','지각',30,'Y','Y','N'],
-    ])
-    mkCode('RESIGN_REASON', '퇴직사유', codeBase, [
-      ['10','자발적퇴직',10,'Y','N'],['20','계약만료',20,'Y','N'],
-      ['30','정년퇴직',30,'Y','N'],['40','권고사직',40,'Y','N'],['50','해고',50,'Y','N'],
-    ])
-    mkCode('SEVERANCE_TYPE', '퇴직금구분', codeBase, [
-      ['10','법정',10,'Y','N'],['20','협의',20,'Y','N'],
-    ])
+      // ── 세액표 (파서: 헤더=행0, 데이터=행1+, A=적용일자, B=이상, C=미만, D~N=1~11인) ──
+      // (apply_from, range_min, range_max)별로 1~11인 세액을 한 행에 모아 원래 업로드 양식 그대로 맞춘다.
+      setProgress('근로소득세액표 불러오는 중… (수천 건, 시간이 걸릴 수 있습니다)')
+      const taxRows = await fetchAllRows('income_tax_table', { orderCol: 'range_min' })
+      const taxGroups = new Map()
+      for (const r of taxRows) {
+        const key = `${r.apply_from}|${r.range_min}|${r.range_max ?? ''}`
+        if (!taxGroups.has(key)) taxGroups.set(key, { apply_from: r.apply_from, range_min: r.range_min, range_max: r.range_max, deps: {} })
+        taxGroups.get(key).deps[r.dependents] = r.tax_amount
+      }
+      const taxHeaders = ['적용일자', '이상(원)', '미만(원)', '1인', '2인', '3인', '4인', '5인', '6인', '7인', '8인', '9인', '10인', '11인']
+      const taxSorted = [...taxGroups.values()].sort((a, b) =>
+        a.apply_from === b.apply_from ? a.range_min - b.range_min : a.apply_from.localeCompare(b.apply_from))
+      const taxData = taxSorted.map((g, i) => [
+        (i === 0 || taxSorted[i - 1].apply_from !== g.apply_from) ? g.apply_from : '',
+        g.range_min, g.range_max ?? '',
+        ...Array.from({ length: 11 }, (_, d) => g.deps[d + 1] ?? 0),
+      ])
+      XLSX.utils.book_append_sheet(wb2, XLSX.utils.aoa_to_sheet([taxHeaders, ...taxData]), '세액표')
 
-    // 세액표 시트 (파서: 헤더=행0, 데이터=행1+, A=적용일자, B=이상, C=미만, D~N=1~11인)
-    const taxHeaders = ['적용일자', '이상(원)', '미만(원)', '1인', '2인', '3인', '4인', '5인', '6인', '7인', '8인', '9인', '10인', '11인']
-    const taxSample1 = [today, 770000, 775000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-    const taxSample2 = ['', 775000, 780000, 19220, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-    XLSX.utils.book_append_sheet(wb2, XLSX.utils.aoa_to_sheet([taxHeaders, taxSample1, taxSample2]), '세액표')
+      // ── 초과세율 (파서: 헤더=행0, 데이터=행1+, A=적용일자, B=구간시작, C=구간끝, D=누적세액, E=보정비율, F=세율) ──
+      setProgress('초과세율표 불러오는 중…')
+      const erRows = (await fetchAllRows('income_tax_excess_rate', { orderCol: 'apply_from' }))
+        .sort((a, b) => a.apply_from === b.apply_from ? a.threshold_from - b.threshold_from : a.apply_from.localeCompare(b.apply_from))
+      const erHeaders = ['적용일자', '구간시작(원) 초과', '구간끝(원) 이하', '누적세액(원)', '보정비율', '세율']
+      const erData = erRows.map(r => [r.apply_from, r.threshold_from, r.threshold_to ?? '', r.accumulated, r.factor, r.rate])
+      XLSX.utils.book_append_sheet(wb2, XLSX.utils.aoa_to_sheet([erHeaders, ...erData]), '초과세율')
 
-    // 초과세율 시트 (파서: 헤더=행0, 데이터=행1+, A=적용일자, B=구간시작, C=구간끝, D=누적세액, E=보정비율, F=세율)
-    const erHeaders = ['적용일자', '구간시작(원) 초과', '구간끝(원) 이하', '누적세액(원)', '보정비율', '세율']
-    const erSamples = [
-      [today, 10000000, 14000000,   25000, 0.98, 0.35],
-      [today, 14000000, 28000000, 1397000, 0.98, 0.38],
-      [today, 28000000, 30000000, 6610600, 0.98, 0.40],
-      [today, 30000000, 45000000, 7394600, 0.98, 0.40],
-      [today, 45000000, 87000000, 13394600, 0.98, 0.42],
-      [today, 87000000, '',       31034600, 0.98, 0.45],
-    ]
-    XLSX.utils.book_append_sheet(wb2, XLSX.utils.aoa_to_sheet([erHeaders, ...erSamples]), '초과세율')
+      // ── 보험요율 (파서: 헤더=행0, 데이터=행1+) ── DB는 비율을 소수(0.09)로 저장, 시트는 %(9)로 표기
+      setProgress('보험요율 불러오는 중…')
+      const insRows = await fetchAllRows('insurance_rates', { orderCol: 'year' })
+      const insHeaders = ['연도', '국민연금(%)', '연금 상한액(원)', '연금 하한액(원)', '건강보험(%)', '장기요양(%)', '고용보험(%)', '적용시작', '적용종료', '비고']
+      const pct = v => Math.round((v ?? 0) * 10000) / 100
+      const insData = insRows.map(r => [r.year, pct(r.pension_rate), r.pension_upper_limit, r.pension_lower_limit, pct(r.health_rate), pct(r.care_rate), pct(r.employ_rate), r.apply_from, r.apply_to, r.memo || ''])
+      XLSX.utils.book_append_sheet(wb2, XLSX.utils.aoa_to_sheet([insHeaders, ...insData]), '보험요율')
 
-    // 보험요율 시트 (파서: 헤더=행0, 데이터=행1+)
-    const insHeaders = ['연도', '국민연금(%)', '연금 상한액(원)', '연금 하한액(원)', '건강보험(%)', '장기요양(%)', '고용보험(%)', '적용시작', '적용종료', '비고']
-    const insSample  = [2026, 9, 6170000, 390000, 7.09, 12.95, 1.8, '2026-01-01', '2026-12-31', '']
-    XLSX.utils.book_append_sheet(wb2, XLSX.utils.aoa_to_sheet([insHeaders, insSample]), '보험요율')
+      // ── 공휴일 (파서: 행0=빈줄, 행1=헤더, 행2+=데이터 / 헤더키: 연도, 날짜, 공휴일명) ──
+      setProgress('공휴일 불러오는 중…')
+      const holRows = await fetchAllRows('holidays', { orderCol: 'holiday_date' })
+      const holTitle   = ['공휴일 현재 데이터 — 행1이 헤더, 행2부터 데이터']
+      const holHeaders = ['연도', '날짜', '공휴일명']
+      const holData = holRows.map(r => [r.year, r.holiday_date, r.holiday_name])
+      XLSX.utils.book_append_sheet(wb2, XLSX.utils.aoa_to_sheet([holTitle, holHeaders, ...holData]), '공휴일')
 
-    // 공휴일 시트 (파서: 행0=빈줄, 행1=헤더, 행2+=데이터 / 헤더키: 연도, 날짜, 공휴일명)
-    const holTitle   = ['공휴일 업로드 양식 — 행1이 헤더, 행2부터 데이터']
-    const holHeaders = ['연도', '날짜', '공휴일명']
-    const holSamples = [
-      [year, `${year}-01-01`, '신정'],
-      [year, `${year}-03-01`, '삼일절'],
-    ]
-    XLSX.utils.book_append_sheet(wb2, XLSX.utils.aoa_to_sheet([holTitle, holHeaders, ...holSamples]), '공휴일')
+      // ── 출산육아급여기준 (파서: 행0=빈줄, 행1=헤더(영문key), 행2+=데이터) ──
+      setProgress('출산육아급여기준 불러오는 중…')
+      const lrRows = await fetchAllRows('gov_leave_benefit_rates', { orderCol: 'year' })
+      const lrTitle   = ['출산육아급여기준 현재 데이터 — 행1이 헤더(영문), 행2부터 데이터']
+      const lrHeaders = ['year', 'maternity_ei_cap', 'paternity_days', 'paternity_ei_cap',
+                         'parental_cap_1_3', 'parental_cap_4_6', 'parental_cap_7p',
+                         'parental_rate_1_6', 'parental_rate_7p', 'parental_floor', 'memo']
+      const lrData = lrRows.map(r => [r.year, r.maternity_ei_cap, r.paternity_days, r.paternity_ei_cap ?? '',
+        r.parental_cap_1_3, r.parental_cap_4_6, r.parental_cap_7p, r.parental_rate_1_6, r.parental_rate_7p, r.parental_floor, r.memo || ''])
+      XLSX.utils.book_append_sheet(wb2, XLSX.utils.aoa_to_sheet([lrTitle, lrHeaders, ...lrData]), '출산육아급여기준')
 
-    // 출산육아급여기준 시트 (파서: 행0=빈줄, 행1=헤더(영문key), 행2+=데이터)
-    const lrTitle   = ['출산육아급여기준 업로드 양식 — 행1이 헤더(영문), 행2부터 데이터']
-    const lrHeaders = ['year', 'maternity_ei_cap', 'paternity_days', 'paternity_ei_cap',
-                       'parental_cap_1_3', 'parental_cap_4_6', 'parental_cap_7p',
-                       'parental_rate_1_6', 'parental_rate_7p', 'parental_floor', 'memo']
-    const lrSample  = [year, 2000000, 10, 2000000, 3000000, 2000000, 1600000, 1, 0.8, 700000, '']
-    XLSX.utils.book_append_sheet(wb2, XLSX.utils.aoa_to_sheet([lrTitle, lrHeaders, lrSample]), '출산육아급여기준')
-
-    const ds = today.replace(/-/g, '')
-    XLSX.writeFile(wb2, `seed_전체업로드양식_${ds}.xlsx`)
+      const ds = today.replace(/-/g, '')
+      XLSX.writeFile(wb2, `seed_현재데이터_${ds}.xlsx`)
+    } catch (err) {
+      setMsg({ type: 'error', text: '데이터 조회 실패: ' + err.message })
+    } finally {
+      setExporting(false); setProgress('')
+    }
   }
 
   const handleImport = async () => {
@@ -1893,7 +1897,7 @@ function BulkUploadModal({ onClose }) {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
           <div>
             <div style={{ fontSize: 16, fontWeight: 700, color: '#1E293B' }}>📦 Excel 전체 업로드</div>
-            <div style={{ fontSize: 12, color: '#94A3B8', marginTop: 2 }}>seed_export_*.xlsx 파일로 전체 시드 데이터를 한번에 업로드합니다.</div>
+            <div style={{ fontSize: 12, color: '#94A3B8', marginTop: 2 }}>seed_현재데이터_*.xlsx 파일로 전체 시드 데이터를 한번에 업로드합니다.</div>
           </div>
           {!importing && <button onClick={onClose} style={s.alertClose}>×</button>}
         </div>
@@ -1905,11 +1909,14 @@ function BulkUploadModal({ onClose }) {
               onMouseLeave={e => e.currentTarget.style.borderColor = '#CBD5E1'}>
               <div style={{ fontSize: 32, marginBottom: 8 }}>📂</div>
               <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Excel 파일을 선택하세요</div>
-              <div style={{ fontSize: 12, color: '#94A3B8' }}>seed_export_YYYYMMDD_v*.xlsx</div>
+              <div style={{ fontSize: 12, color: '#94A3B8' }}>seed_현재데이터_YYYYMMDD.xlsx</div>
             </div>
             <input ref={fileRef} type="file" accept=".xlsx" style={{ display: 'none' }} onChange={handleFile} />
-            <div style={{ marginTop: 10, textAlign: 'right' }}>
-              <button style={{ ...s.btn('ghost'), fontSize: 12 }} onClick={downloadBulkTemplate}>📥 업로드 양식 다운로드</button>
+            <div style={{ marginTop: 10, display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 10 }}>
+              {exporting && <span style={{ fontSize: 12, color: '#2563EB' }}>{progress || '불러오는 중…'}</span>}
+              <button style={{ ...s.btn('ghost'), fontSize: 12 }} onClick={exportLiveData} disabled={exporting}>
+                {exporting ? '⏳ 다운로드 중…' : '📥 현재 데이터 다운로드'}
+              </button>
             </div>
             {msg && <div style={{ ...s.alert, ...(msg.type === 'error' ? s.alertError : s.alertOk), marginTop: 12 }}>{msg.text}</div>}
           </div>
