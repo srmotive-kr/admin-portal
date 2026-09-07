@@ -29,6 +29,24 @@ function xlDateToStr(v) {
   return String(v ?? '').trim()
 }
 
+// 시트의 실제 데이터 범위(!ref) 안 모든 셀에 셀서식 "텍스트"(numFmt '@')를 지정한다 — 스마트HR+
+// 업로드양식과 동일한 목적: 엑셀에서 코드번호·날짜·금액을 수정할 때 자동으로 날짜/숫자 서식으로
+// 바뀌는 것을 방지한다. 이미 채워진 셀만 대상으로 하며 새로 빈 셀을 추가하지 않는다 — 세액표처럼
+// 파서가 "값이 있으면 데이터 행"으로 판단하는 시트에 빈 서식행을 덧붙이면 phantom 행이 파싱될
+// 위험이 있어(range_min 등 숫자 컬럼은 빈 문자열이 Number('')===0이 되어 NaN 체크를 통과함),
+// 실제 데이터 범위를 넘어서는 패딩은 하지 않는다.
+function applyTextFormat(ws) {
+  const ref = ws['!ref']
+  if (!ref) return
+  const range = XLSX.utils.decode_range(ref)
+  for (let R = range.s.r; R <= range.e.r; R++) {
+    for (let C = range.s.c; C <= range.e.c; C++) {
+      const addr = XLSX.utils.encode_cell({ r: R, c: C })
+      if (ws[addr]) ws[addr].z = '@'
+    }
+  }
+}
+
 // Supabase 테이블 전체 조회(1000행 페이지네이션) — "실시간 데이터 다운로드" 전용.
 // PostgREST 기본 최대 반환 건수(1000)를 넘는 테이블(예: 근로소득세액표)도 끝까지 받아온다.
 async function fetchAllRows(table, { orderCol } = {}) {
@@ -1700,10 +1718,10 @@ function BulkUploadModal({ onClose }) {
   const [exporting, setExporting] = useState(false)
   const [msg, setMsg]             = useState(null)
   const [done, setDone]           = useState(false)
+  const [dragActive, setDragActive] = useState(false)
   const fileRef = useRef(null)
 
-  const handleFile = async (e) => {
-    const f = e.target.files?.[0]
+  const processFile = async (f) => {
     if (!f) return
     try {
       const buf = await f.arrayBuffer()
@@ -1713,6 +1731,12 @@ function BulkUploadModal({ onClose }) {
     } catch (err) {
       setMsg({ type: 'error', text: 'Excel 파일 읽기 실패: ' + err.message })
     }
+  }
+  const handleFile = (e) => processFile(e.target.files?.[0])
+  const handleDrop = (e) => {
+    e.preventDefault()
+    setDragActive(false)
+    processFile(e.dataTransfer.files?.[0])
   }
 
   // 실시간 데이터 다운로드 — Supabase의 현재 seed 데이터를 그대로 xlsx로 내려받는다.
@@ -1770,8 +1794,11 @@ function BulkUploadModal({ onClose }) {
       const taxHeaders = ['적용일자', '이상(원)', '미만(원)', '1인', '2인', '3인', '4인', '5인', '6인', '7인', '8인', '9인', '10인', '11인']
       const taxSorted = [...taxGroups.values()].sort((a, b) =>
         a.apply_from === b.apply_from ? a.range_min - b.range_min : a.apply_from.localeCompare(b.apply_from))
-      const taxData = taxSorted.map((g, i) => [
-        (i === 0 || taxSorted[i - 1].apply_from !== g.apply_from) ? g.apply_from : '',
+      // 그룹 첫 행에만 적용일자를 채우고 나머지는 비워두던 방식은(재업로드 파서가 빈칸을 직전
+      // 값으로 이어받으므로) 파싱상 문제는 없었지만, 매 행에 값이 보이는 편이 다운로드한 파일을
+      // 직접 보거나 필터링할 때 더 명확하다는 요청으로 모든 행에 채워서 만든다(2026-09-07).
+      const taxData = taxSorted.map(g => [
+        g.apply_from,
         g.range_min, g.range_max ?? '',
         ...Array.from({ length: 11 }, (_, d) => g.deps[d + 1] ?? 0),
       ])
@@ -1811,6 +1838,10 @@ function BulkUploadModal({ onClose }) {
       const lrData = lrRows.map(r => [r.year, r.maternity_ei_cap, r.paternity_days, r.paternity_ei_cap ?? '',
         r.parental_cap_1_3, r.parental_cap_4_6, r.parental_cap_7p, r.parental_rate_1_6, r.parental_rate_7p, r.parental_floor, r.memo || ''])
       XLSX.utils.book_append_sheet(wb2, XLSX.utils.aoa_to_sheet([lrTitle, lrHeaders, ...lrData]), '출산육아급여기준')
+
+      // 스마트HR+ 업로드양식과 동일하게, 다운로드한 파일을 열어 값을 고칠 때 엑셀이 날짜/숫자
+      // 서식으로 자동 변환하지 않도록 전체 시트의 채워진 셀에 "텍스트" 서식을 지정한다.
+      for (const sheetName of wb2.SheetNames) applyTextFormat(wb2.Sheets[sheetName])
 
       const ds = today.replace(/-/g, '')
       XLSX.writeFile(wb2, `seed_현재데이터_${ds}.xlsx`)
@@ -1904,11 +1935,17 @@ function BulkUploadModal({ onClose }) {
 
         {!preview ? (
           <div>
-            <div onClick={() => fileRef.current?.click()} style={{ border: '2px dashed #CBD5E1', borderRadius: 10, padding: '32px 20px', textAlign: 'center', cursor: 'pointer', color: '#475569', transition: 'border-color .15s' }}
-              onMouseEnter={e => e.currentTarget.style.borderColor = '#93C5FD'}
-              onMouseLeave={e => e.currentTarget.style.borderColor = '#CBD5E1'}>
+            <div onClick={() => fileRef.current?.click()}
+              onDragOver={e => { e.preventDefault(); setDragActive(true) }}
+              onDragLeave={() => setDragActive(false)}
+              onDrop={handleDrop}
+              style={{ border: '2px dashed', borderColor: dragActive ? '#2563EB' : '#CBD5E1',
+                background: dragActive ? '#EFF6FF' : 'transparent',
+                borderRadius: 10, padding: '32px 20px', textAlign: 'center', cursor: 'pointer', color: '#475569', transition: 'border-color .15s, background .15s' }}
+              onMouseEnter={e => { if (!dragActive) e.currentTarget.style.borderColor = '#93C5FD' }}
+              onMouseLeave={e => { if (!dragActive) e.currentTarget.style.borderColor = '#CBD5E1' }}>
               <div style={{ fontSize: 32, marginBottom: 8 }}>📂</div>
-              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Excel 파일을 선택하세요</div>
+              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Excel 파일을 선택하거나 끌어다 놓으세요</div>
               <div style={{ fontSize: 12, color: '#94A3B8' }}>seed_현재데이터_YYYYMMDD.xlsx</div>
             </div>
             <input ref={fileRef} type="file" accept=".xlsx" style={{ display: 'none' }} onChange={handleFile} />
