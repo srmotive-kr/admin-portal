@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useProduct } from '../lib/ProductContext'
+import { issueLimitsFor } from './LicenseManager'
 
 const GRADE_OPTIONS = ['FREE', 'PRO', 'ENTERPRISE']
 
@@ -55,11 +56,13 @@ export default function FreeRenewal() {
     setSaving(false)
   }
 
+  // grade만 바꾸면 max_emps/max_users가 예전 FREE 등급 값(4명/1대)에 그대로 남아, 결제한
+  // 등급의 실제 한도가 적용되지 않는 문제가 있었다 — 등급별 한도(issueLimitsFor)를 함께 적용한다.
   async function handleUpgrade(lic, grade) {
     setSaving(true); setMsg('')
     const { error } = await supabase
       .from('licenses')
-      .update({ grade, updated_at: new Date().toISOString() })
+      .update({ grade, updated_at: new Date().toISOString(), ...issueLimitsFor(productCode, grade) })
       .eq('id', lic.id)
 
     if (error) setMsg('오류: ' + error.message)

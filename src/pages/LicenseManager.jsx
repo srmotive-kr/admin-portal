@@ -26,9 +26,9 @@ const ISSUE_LIMITS_BY_PRODUCT = {
 }
 const DEFAULT_ISSUE_LIMITS = {
   FREE: { max_emps: 4, max_users: 1 }, STARTER: { max_emps: 9, max_users: 1 },
-  PRO: { max_emps: 29, max_users: 2 }, ENTERPRISE: { max_emps: null, max_users: 0 },
+  PRO: { max_emps: 29, max_users: 2 }, ENTERPRISE: { max_emps: null, max_users: 4 },
 }
-function issueLimitsFor(productCode, grade) {
+export function issueLimitsFor(productCode, grade) {
   const table = ISSUE_LIMITS_BY_PRODUCT[productCode] || DEFAULT_ISSUE_LIMITS
   return table[grade] || DEFAULT_ISSUE_LIMITS.FREE
 }
@@ -588,7 +588,23 @@ function DetailPanel({ row, onClose, onRefresh }) {
             </div>
             <div style={styles.field}>
               <label style={styles.label}>등급</label>
-              <select value={form.grade} onChange={e => setForm(f => ({ ...f, grade: e.target.value }))} style={styles.input}>
+              <select
+                value={form.grade}
+                onChange={e => {
+                  const grade = e.target.value
+                  // 등급 변경 시 해당 등급의 기본 직원수/PC수 한도로 자동 갱신한다(2026-09-09) —
+                  // 예전에는 등급만 바뀌고 max_emps/max_users는 이전 값 그대로 저장돼, 예를 들어
+                  // PRO→ENTERPRISE로 바꿔도 PC 한도가 여전히 2대(PRO 값)로 남는 문제가 있었다.
+                  // 특수 계약으로 기본값과 다른 한도가 필요하면 저장 전에 직접 수정하면 된다.
+                  const limits = issueLimitsFor(row.product_code, grade)
+                  setForm(f => ({
+                    ...f, grade,
+                    max_emps: limits.max_emps ?? '',
+                    max_users: limits.max_users ?? '',
+                  }))
+                }}
+                style={styles.input}
+              >
                 {gradeOptionsFor(row.product_code).map(g => <option key={g} value={g}>{g}</option>)}
               </select>
             </div>
