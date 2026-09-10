@@ -65,11 +65,18 @@ async function fetchAllRows(table, { orderCol } = {}) {
 }
 
 // ─── 코드 그룹 정의 ───────────────────────────────────────────────────────
+// 순서: 스마트HR+ 사용자 앱의 코드관리(CodeManager.jsx TAB_LIST)와 동일하게 통일.
+// 사용자 앱에 없는 그룹(RESIGN_REASON/SEVERANCE_TYPE)은 뒤쪽에 배치(2026-09-10).
+// DEPT(부서명, 2026-09-10 추가): 그동안 배포 파일(001_seed_codes.sql)에만 하드코딩되어 있고
+// 이 어드민 포탈 시드 관리 대상에서 빠져 있었다 — "seed 데이터인데 어드민에서 관리 불가"인
+// 모순이라 다른 그룹과 동일하게 여기 편입. 이제부터 Admin Portal이 DEPT의 단일 소스다.
 const CODE_GROUPS = [
+  { code: 'DEPT',          label: '부서명',         hasTaxable: false, hasOrdinary: false },
   { code: 'RANK',          label: '직책명',         hasTaxable: false, hasOrdinary: false },
   { code: 'POS',           label: '직위명',         hasTaxable: false, hasOrdinary: false },
-  { code: 'EMP_TYPE',      label: '고용형태구분',   hasTaxable: false, hasOrdinary: false },
   { code: 'JOB',           label: '업무구분',       hasTaxable: false, hasOrdinary: false },
+  { code: 'EMP_TYPE',      label: '고용형태구분',   hasTaxable: false, hasOrdinary: false },
+  { code: 'ASSIGN_TYPE',   label: '발령구분',       hasTaxable: false, hasOrdinary: false },
   { code: 'SALARY_TYPE',   label: '급여구분',       hasTaxable: false, hasOrdinary: false },
   // attOptionalNames: 지급방식(정액/출근일기준)을 개별 급여정보 등록 시 사용자가 선택하는 수당.
   // 통상임금 포함여부가 그 선택에 따라 동적으로 결정되므로, 이 seed 화면에서 ordinary_yn을
@@ -78,9 +85,8 @@ const CODE_GROUPS = [
   { code: 'BONUS_TYPE',    label: '상여금구분',     hasTaxable: false, hasOrdinary: false },
   { code: 'LEAVE_TYPE',    label: '휴가구분',       hasTaxable: true,  taxableLabel: '유급여부', hasOrdinary: false },
   { code: 'OUTING_TYPE',   label: '외출/조퇴구분',  hasTaxable: true,  taxableLabel: '유급여부', hasOrdinary: false },
-  { code: 'ASSIGN_TYPE',   label: '발령구분',       hasTaxable: false, hasOrdinary: false },
   { code: 'RESIGN_REASON', label: '퇴직사유',       hasTaxable: false, hasOrdinary: false },
-  { code: 'SEVERANCE_TYPE',label: '퇴직금구분',     hasTaxable: false, hasOrdinary: false },
+  { code: 'SEVERANCE_TYPE',label: '퇴직급여유형',    hasTaxable: false, hasOrdinary: false },
 ]
 
 const MAIN_TABS = ['코드', '보험요율', '최저임금', '근로소득세액표', '공휴일', '출산육아급여']
@@ -1569,7 +1575,11 @@ function HolidayTab({ onDirtyChange }) {
 }
 
 // ─── Excel 전체 업로드 모달 ──────────────────────────────────────────────────
-const CODE_SHEETS = ['직책명','직위명','고용형태구분','발령구분','업무구분','급여구분','수당구분','상여금구분','휴가구분','외출조퇴구분','퇴직사유','퇴직금구분']
+// CODE_GROUPS에서 그대로 파생시킨다(2026-09-10) — 예전엔 이 목록을 별도로 하드코딩해뒀는데,
+// CODE_GROUPS에 그룹을 추가(부서명 등)해도 여기는 안 바뀌어서 업로드 파싱이 조용히 그 시트를
+// 건너뛰는 버그가 있었다(다운로드는 CODE_GROUPS를 쓰는데 업로드는 이 목록을 써서 서로 어긋남).
+// 시트명 금지문자 제거는 exportLiveData()의 sheetName 규칙과 동일하게 맞춘다.
+const CODE_SHEETS = CODE_GROUPS.map(g => g.label.replace(/[:\\/?*[\]]/g, ''))
 
 function parseWorkbook(wb) {
   const codes = [], insurance = [], tax = [], holidays = [], leaveRates = [], excessRate = [], skipped = []
@@ -1781,8 +1791,20 @@ function BulkUploadModal({ onClose }) {
           sheetName)
       }
 
+      // ── 보험요율 (파서: 헤더=행0, 데이터=행1+) ── DB는 비율을 소수(0.09)로 저장, 시트는 %(9)로 표기
+      // 시트 순서는 이 편집기의 메뉴 순서(MAIN_TABS: 코드→보험요율→최저임금→근로소득세액표→
+      // 공휴일→출산육아급여)와 동일하게 맞춘다(2026-09-10). 최저임금은 이 다운로드에 포함되지
+      // 않는 항목이라 시트가 없다(기존부터 그랬음, 이번 변경과 무관).
+      setProgress('보험요율 불러오는 중…')
+      const insRows = await fetchAllRows('insurance_rates', { orderCol: 'year' })
+      const insHeaders = ['연도', '국민연금(%)', '연금 상한액(원)', '연금 하한액(원)', '건강보험(%)', '장기요양(%)', '고용보험(%)', '적용시작', '적용종료', '비고']
+      const pct = v => Math.round((v ?? 0) * 10000) / 100
+      const insData = insRows.map(r => [r.year, pct(r.pension_rate), r.pension_upper_limit, r.pension_lower_limit, pct(r.health_rate), pct(r.care_rate), pct(r.employ_rate), r.apply_from, r.apply_to, r.memo || ''])
+      XLSX.utils.book_append_sheet(wb2, XLSX.utils.aoa_to_sheet([insHeaders, ...insData]), '보험요율')
+
       // ── 세액표 (파서: 헤더=행0, 데이터=행1+, A=적용일자, B=이상, C=미만, D~N=1~11인) ──
       // (apply_from, range_min, range_max)별로 1~11인 세액을 한 행에 모아 원래 업로드 양식 그대로 맞춘다.
+      // 세액표/초과세율은 "근로소득세액표" 메뉴 하나가 두 시트로 쪼개진 경우라 서로 나란히 배치한다.
       setProgress('근로소득세액표 불러오는 중… (수천 건, 시간이 걸릴 수 있습니다)')
       const taxRows = await fetchAllRows('income_tax_table', { orderCol: 'range_min' })
       const taxGroups = new Map()
@@ -1811,14 +1833,6 @@ function BulkUploadModal({ onClose }) {
       const erHeaders = ['적용일자', '구간시작(원) 초과', '구간끝(원) 이하', '누적세액(원)', '보정비율', '세율']
       const erData = erRows.map(r => [r.apply_from, r.threshold_from, r.threshold_to ?? '', r.accumulated, r.factor, r.rate])
       XLSX.utils.book_append_sheet(wb2, XLSX.utils.aoa_to_sheet([erHeaders, ...erData]), '초과세율')
-
-      // ── 보험요율 (파서: 헤더=행0, 데이터=행1+) ── DB는 비율을 소수(0.09)로 저장, 시트는 %(9)로 표기
-      setProgress('보험요율 불러오는 중…')
-      const insRows = await fetchAllRows('insurance_rates', { orderCol: 'year' })
-      const insHeaders = ['연도', '국민연금(%)', '연금 상한액(원)', '연금 하한액(원)', '건강보험(%)', '장기요양(%)', '고용보험(%)', '적용시작', '적용종료', '비고']
-      const pct = v => Math.round((v ?? 0) * 10000) / 100
-      const insData = insRows.map(r => [r.year, pct(r.pension_rate), r.pension_upper_limit, r.pension_lower_limit, pct(r.health_rate), pct(r.care_rate), pct(r.employ_rate), r.apply_from, r.apply_to, r.memo || ''])
-      XLSX.utils.book_append_sheet(wb2, XLSX.utils.aoa_to_sheet([insHeaders, ...insData]), '보험요율')
 
       // ── 공휴일 (파서: 행0=빈줄, 행1=헤더, 행2+=데이터 / 헤더키: 연도, 날짜, 공휴일명) ──
       setProgress('공휴일 불러오는 중…')
@@ -1979,7 +1993,8 @@ function BulkUploadModal({ onClose }) {
               )}
             </div>
             <div style={{ padding: '8px 12px', background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: 6, fontSize: 12, color: '#9A3412', marginBottom: 16 }}>
-              ⚠️ 코드: 기존 코드명만 업데이트, 사용여부·순서·사용자추가코드 보존<br/>
+              ⚠️ 코드: 업로드 파일에 포함된 그룹은 기존 코드 전체 삭제 후 파일 내용으로 대체 (파일에 없는
+              코드·사용자추가코드도 함께 삭제, 되돌릴 수 없음)<br/>
               ⚠️ 보험요율·간이세액표·초과세율·공휴일: 해당 시행일 데이터 삭제 후 대체 (되돌릴 수 없음)
             </div>
             {msg && <div style={{ ...s.alert, ...(msg.type === 'error' ? s.alertError : s.alertOk), marginBottom: 12 }}>{msg.text}</div>}
