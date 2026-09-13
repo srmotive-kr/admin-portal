@@ -14,6 +14,17 @@ async function touchSyncMeta() {
   if (error) console.error('[touchSyncMeta]', error.message)
 }
 
+// 금액 입력란 콤마 표시용 — 표시는 천단위 콤마, 저장값은 항상 순수 숫자로 유지한다.
+function fmtMoney(v) {
+  if (v === '' || v === null || v === undefined) return ''
+  const n = Number(v)
+  return isNaN(n) ? '' : n.toLocaleString('ko-KR')
+}
+function parseMoney(s) {
+  const n = Number(String(s ?? '').replace(/,/g, ''))
+  return isNaN(n) ? 0 : n
+}
+
 // Excel 날짜(Date 객체 또는 시리얼 숫자) → 'YYYY-MM-DD' 문자열 변환
 function xlDateToStr(v) {
   if (v instanceof Date) {
@@ -556,7 +567,7 @@ function InsuranceTab({ onDirtyChange }) {
 
   const load = async () => {
     setLoading(true)
-    const { data, error } = await supabase.from('insurance_rates').select('*').order('year', { ascending: false })
+    const { data, error } = await supabase.from('insurance_rates').select('*').order('apply_from', { ascending: false })
     if (error) { setMsg({ type: 'error', text: error.message }); setLoading(false); return }
     setItems(data || []); setDirty(false); setLoading(false)
   }
@@ -573,6 +584,7 @@ function InsuranceTab({ onDirtyChange }) {
       id: null, year: new Date().getFullYear(),
       pension_rate: 0.09, health_rate: 0.0709, care_rate: 0.1295, employ_rate: 0.018,
       pension_upper_limit: 0, pension_lower_limit: 0,
+      health_upper_limit: 0, health_lower_limit: 0,
       apply_from: null, apply_to: null, memo: '', _dirty: true,
     }])
     setDirty(true)
@@ -649,9 +661,11 @@ function InsuranceTab({ onDirtyChange }) {
               <tr>
                 <th style={{ ...s.th, width: 80 }}>연도</th>
                 <th style={{ ...s.th, width: 150, textAlign: 'center' }}>국민연금</th>
-                <th style={{ ...s.th, width: 130, textAlign: 'center' }}>연금 상한액</th>
-                <th style={{ ...s.th, width: 130, textAlign: 'center' }}>연금 하한액</th>
+                <th style={{ ...s.th, width: 130, textAlign: 'center' }} title="기준소득월액(보수) 자체의 상한 — NHIS/공단 공시 '보수월액' 기준 금액">연금 상한액</th>
+                <th style={{ ...s.th, width: 130, textAlign: 'center' }} title="기준소득월액(보수) 자체의 하한 — NHIS/공단 공시 '보수월액' 기준 금액">연금 하한액</th>
                 <th style={{ ...s.th, width: 150, textAlign: 'center' }}>건강보험</th>
+                <th style={{ ...s.th, width: 130, textAlign: 'center' }} title="⚠ 보수월액이 아니라 월 산출보험료(전액, 근로자+회사 합산) 상한 — 예: 2026년 9,183,480원. 보건복지부 고시 '월별 보험료액의 상한' 수치를 그대로 입력">건강 상한액</th>
+                <th style={{ ...s.th, width: 130, textAlign: 'center' }} title="⚠ 보수월액이 아니라 월 산출보험료(전액, 근로자+회사 합산) 하한 — 보건복지부 고시 '월별 보험료액의 하한' 수치를 그대로 입력">건강 하한액</th>
                 <th style={{ ...s.th, width: 150, textAlign: 'center' }}>장기요양</th>
                 <th style={{ ...s.th, width: 150, textAlign: 'center' }}>고용보험</th>
                 <th style={{ ...s.th, width: 140 }}>적용시작</th>
@@ -678,15 +692,33 @@ function InsuranceTab({ onDirtyChange }) {
                   </td>
                   <td style={{ ...s.td, textAlign: 'center' }}>
                     <input style={{ ...s.input, width: 110, textAlign: 'right' }}
-                      type="text" inputMode="numeric" value={it.pension_upper_limit || 0}
-                      onChange={e => change(idx, 'pension_upper_limit', Number(e.target.value))} />
+                      type="text" inputMode="numeric" value={fmtMoney(it.pension_upper_limit)}
+                      onChange={e => change(idx, 'pension_upper_limit', parseMoney(e.target.value))} />
                   </td>
                   <td style={{ ...s.td, textAlign: 'center' }}>
                     <input style={{ ...s.input, width: 110, textAlign: 'right' }}
-                      type="text" inputMode="numeric" value={it.pension_lower_limit || 0}
-                      onChange={e => change(idx, 'pension_lower_limit', Number(e.target.value))} />
+                      type="text" inputMode="numeric" value={fmtMoney(it.pension_lower_limit)}
+                      onChange={e => change(idx, 'pension_lower_limit', parseMoney(e.target.value))} />
                   </td>
-                  {['health_rate','care_rate','employ_rate'].map(key => (
+                  <td style={{ ...s.td, textAlign: 'center' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, justifyContent: 'center' }}>
+                      <input style={{ ...s.input, width: 70, textAlign: 'right' }}
+                        type="text" inputMode="decimal" value={parseFloat((Number(it.health_rate || 0) * 100).toFixed(4))}
+                        onChange={e => change(idx, 'health_rate', Number(e.target.value) / 100)} />
+                      <span style={{ fontSize: 11, color: '#94A3B8' }}>%</span>
+                    </div>
+                  </td>
+                  <td style={{ ...s.td, textAlign: 'center' }}>
+                    <input style={{ ...s.input, width: 110, textAlign: 'right' }}
+                      type="text" inputMode="numeric" value={fmtMoney(it.health_upper_limit)}
+                      onChange={e => change(idx, 'health_upper_limit', parseMoney(e.target.value))} />
+                  </td>
+                  <td style={{ ...s.td, textAlign: 'center' }}>
+                    <input style={{ ...s.input, width: 110, textAlign: 'right' }}
+                      type="text" inputMode="numeric" value={fmtMoney(it.health_lower_limit)}
+                      onChange={e => change(idx, 'health_lower_limit', parseMoney(e.target.value))} />
+                  </td>
+                  {['care_rate','employ_rate'].map(key => (
                     <td key={key} style={{ ...s.td, textAlign: 'center' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 4, justifyContent: 'center' }}>
                         <input style={{ ...s.input, width: 70, textAlign: 'right' }}
@@ -840,8 +872,8 @@ function MinimumWageTab({ onDirtyChange }) {
                   </td>
                   <td style={{ ...s.td, textAlign: 'right' }}>
                     <input style={{ ...s.input, textAlign: 'right' }}
-                      type="text" inputMode="numeric" value={it.amount}
-                      onChange={e => change(idx, 'amount', Number(e.target.value))} />
+                      type="text" inputMode="numeric" value={fmtMoney(it.amount)}
+                      onChange={e => change(idx, 'amount', parseMoney(e.target.value))} />
                   </td>
                   <td style={s.td}>
                     <input style={s.input} value={it.memo || ''}
@@ -1299,15 +1331,15 @@ function ExcessRateSection({ onDirtyChange }) {
                       style={{ ...s.input, width: 110 }} placeholder="YYYY-MM-DD" />
                   </td>
                   <td style={s.td}>
-                    <input type="text" inputMode="numeric" value={r.threshold_from} onChange={e => change(i, 'threshold_from', e.target.value)}
+                    <input type="text" inputMode="numeric" value={fmtMoney(r.threshold_from)} onChange={e => change(i, 'threshold_from', parseMoney(e.target.value))}
                       style={{ ...s.input, textAlign: 'right', width: 120 }} />
                   </td>
                   <td style={s.td}>
-                    <input type="text" inputMode="numeric" value={r.threshold_to ?? ''} onChange={e => change(i, 'threshold_to', e.target.value === '' ? null : e.target.value)}
+                    <input type="text" inputMode="numeric" value={r.threshold_to == null ? '' : fmtMoney(r.threshold_to)} onChange={e => change(i, 'threshold_to', e.target.value === '' ? null : parseMoney(e.target.value))}
                       style={{ ...s.input, textAlign: 'right', width: 120 }} placeholder="(최고 구간)" />
                   </td>
                   <td style={s.td}>
-                    <input type="text" inputMode="numeric" value={r.accumulated} onChange={e => change(i, 'accumulated', e.target.value)}
+                    <input type="text" inputMode="numeric" value={fmtMoney(r.accumulated)} onChange={e => change(i, 'accumulated', parseMoney(e.target.value))}
                       style={{ ...s.input, textAlign: 'right', width: 110 }} />
                   </td>
                   <td style={s.td}>
@@ -1636,6 +1668,8 @@ function parseWorkbook(wb) {
         pension_upper_limit: safeN(r[ci('연금 상한액(원)')]),
         pension_lower_limit: safeN(r[ci('연금 하한액(원)')]),
         health_rate:         safeN(r[ci('건강보험(%)')]) / 100,
+        health_upper_limit:  safeN(r[ci('건강 상한액(원)')]),
+        health_lower_limit:  safeN(r[ci('건강 하한액(원)')]),
         care_rate:           safeN(r[ci('장기요양(%)')]) / 100,
         employ_rate:         safeN(r[ci('고용보험(%)')]) / 100,
         apply_from:          toYM(r[ci('적용시작')]),
@@ -1797,9 +1831,9 @@ function BulkUploadModal({ onClose }) {
       // 않는 항목이라 시트가 없다(기존부터 그랬음, 이번 변경과 무관).
       setProgress('보험요율 불러오는 중…')
       const insRows = await fetchAllRows('insurance_rates', { orderCol: 'year' })
-      const insHeaders = ['연도', '국민연금(%)', '연금 상한액(원)', '연금 하한액(원)', '건강보험(%)', '장기요양(%)', '고용보험(%)', '적용시작', '적용종료', '비고']
+      const insHeaders = ['연도', '국민연금(%)', '연금 상한액(원)', '연금 하한액(원)', '건강보험(%)', '건강 상한액(원)', '건강 하한액(원)', '장기요양(%)', '고용보험(%)', '적용시작', '적용종료', '비고']
       const pct = v => Math.round((v ?? 0) * 10000) / 100
-      const insData = insRows.map(r => [r.year, pct(r.pension_rate), r.pension_upper_limit, r.pension_lower_limit, pct(r.health_rate), pct(r.care_rate), pct(r.employ_rate), r.apply_from, r.apply_to, r.memo || ''])
+      const insData = insRows.map(r => [r.year, pct(r.pension_rate), r.pension_upper_limit, r.pension_lower_limit, pct(r.health_rate), r.health_upper_limit, r.health_lower_limit, pct(r.care_rate), pct(r.employ_rate), r.apply_from, r.apply_to, r.memo || ''])
       XLSX.utils.book_append_sheet(wb2, XLSX.utils.aoa_to_sheet([insHeaders, ...insData]), '보험요율')
 
       // ── 세액표 (파서: 헤더=행0, 데이터=행1+, A=적용일자, B=이상, C=미만, D~N=1~11인) ──
