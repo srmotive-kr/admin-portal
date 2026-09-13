@@ -101,18 +101,25 @@ export default function LicenseManager() {
     setLoading(true)
     setLoadError('')
     if (!productCode) { setRows([]); setTotal(0); setLoading(false); return }
-    let q = supabase.from('licenses').select('*', { count: 'exact' }).eq('product_code', productCode)
-    if (filter.q) q = q.or(`license_key.ilike.%${filter.q}%,email.ilike.%${filter.q}%`)
-    if (filter.grade) q = q.eq('grade', filter.grade)
-    if (filter.status) q = q.eq('status', filter.status)
-    if (filter.channel) q = q.eq('channel', filter.channel)
-    if (dateApplied?.from) q = q.gte(dateApplied.field, `${dateApplied.from}T00:00:00`)
-    if (dateApplied?.to) q = q.lte(dateApplied.field, `${dateApplied.to}T23:59:59`)
-    q = q.order('created_at', { ascending: false }).range(page * PAGE, (page + 1) * PAGE - 1)
-    const { data, count, error } = await q
-    if (error) setLoadError(`데이터 조회 실패: ${error.message}`)
-    setRows(data || [])
-    setTotal(count || 0)
+    // email/biz_no/company_name/contact_name이 암호화 컬럼이라(2026-09-13) 직접 조회 대신
+    // admin-licenses 함수가 서버에서 복호화해 내려준다.
+    const { data: { session } } = await supabase.auth.getSession()
+    const { data, error } = await supabase.functions.invoke('admin-licenses', {
+      body: {
+        action: 'list', productCode, filter, dateApplied, q: filter.q || undefined,
+        page, pageSize: PAGE,
+      },
+      headers: session ? { Authorization: `Bearer ${session.access_token}` } : {},
+    })
+    if (error) {
+      let detail = error.message
+      try { const b = await error.context?.json(); if (b?.error) detail = b.error } catch {}
+      setLoadError(`데이터 조회 실패: ${detail}`)
+      setRows([]); setTotal(0); setLoading(false)
+      return
+    }
+    setRows(data.rows || [])
+    setTotal(data.total || 0)
     setLoading(false)
   }
 
@@ -467,12 +474,16 @@ function DetailPanel({ row, onClose, onRefresh }) {
 
   async function saveEmail() {
     setEmailMsg(''); setEmailErr('')
-    const { error } = await supabase.from('licenses').update({
-      email: form.email || null,
-      updated_at: new Date().toISOString(),
-    }).eq('license_key', row.license_key)
-    if (error) setEmailErr(`저장 실패: ${error.message}`)
-    else { setEmailMsg('이메일 저장됨'); onRefresh() }
+    const { data: { session } } = await supabase.auth.getSession()
+    const { error } = await supabase.functions.invoke('admin-licenses', {
+      body: { action: 'update_email', license_key: row.license_key, email: form.email || null },
+      headers: session ? { Authorization: `Bearer ${session.access_token}` } : {},
+    })
+    if (error) {
+      let detail = error.message
+      try { const b = await error.context?.json(); if (b?.error) detail = b.error } catch {}
+      setEmailErr(`저장 실패: ${detail}`)
+    } else { setEmailMsg('이메일 저장됨'); onRefresh() }
   }
 
   async function saveBizInfo() {
@@ -482,14 +493,19 @@ function DetailPanel({ row, onClose, onRefresh }) {
       setBizErr('사업자등록번호는 숫자 10자리여야 합니다.')
       return
     }
-    const { error } = await supabase.from('licenses').update({
-      company_name: form.company_name || null,
-      contact_name: form.contact_name || null,
-      biz_no: bizNoDigits || null,
-      updated_at: new Date().toISOString(),
-    }).eq('license_key', row.license_key)
-    if (error) setBizErr(`저장 실패: ${error.message}`)
-    else { setBizMsg('저장됨'); onRefresh() }
+    const { data: { session } } = await supabase.auth.getSession()
+    const { error } = await supabase.functions.invoke('admin-licenses', {
+      body: {
+        action: 'update_biz_info', license_key: row.license_key,
+        company_name: form.company_name || null, contact_name: form.contact_name || null, biz_no: bizNoDigits || null,
+      },
+      headers: session ? { Authorization: `Bearer ${session.access_token}` } : {},
+    })
+    if (error) {
+      let detail = error.message
+      try { const b = await error.context?.json(); if (b?.error) detail = b.error } catch {}
+      setBizErr(`저장 실패: ${detail}`)
+    } else { setBizMsg('저장됨'); onRefresh() }
   }
 
   async function resendEmail() {
@@ -844,23 +860,24 @@ function IssueModal({ onClose, onRefresh }) {
     setSaving(true)
     setIssueError('')
     const key = `${prefix}-${uuid4()}`
-    const { data, error } = await supabase.from('licenses').insert({
-      license_key: key,
-      grade: form.grade,
-      email: form.email || null,
-      expires_at: form.expires_at || null,
-      notes: form.notes || null,
-      channel: form.channel,
-      status: 'ACTIVE',
-      product_code: productCode,
-      ...issueLimitsFor(productCode, form.grade),
-    }).select().single()
+    const { data: { session } } = await supabase.auth.getSession()
+    const { data: res, error } = await supabase.functions.invoke('admin-licenses', {
+      body: {
+        action: 'create', license_key: key, grade: form.grade, email: form.email || null,
+        expires_at: form.expires_at || null, notes: form.notes || null, channel: form.channel,
+        product_code: productCode, ...issueLimitsFor(productCode, form.grade),
+      },
+      headers: session ? { Authorization: `Bearer ${session.access_token}` } : {},
+    })
 
     if (error) {
       setSaving(false)
-      setIssueError(`발급 실패: ${error.message}`)
+      let detail = error.message
+      try { const b = await error.context?.json(); if (b?.error) detail = b.error } catch {}
+      setIssueError(`발급 실패: ${detail}`)
       return
     }
+    const data = res.license
 
     if (form.email) {
       const { error: emailErr } = await supabase.functions.invoke('send-license-email', {
