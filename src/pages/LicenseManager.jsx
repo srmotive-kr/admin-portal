@@ -422,7 +422,12 @@ function DetailPanel({ row, onClose, onRefresh }) {
     email: row.email || '',
     max_emps: row.max_emps ?? '',
     max_users: row.max_users ?? '',
+    company_name: row.company_name || '',
+    contact_name: row.contact_name || '',
+    biz_no: row.biz_no || '',
   })
+  const [bizMsg, setBizMsg] = useState('')
+  const [bizErr, setBizErr] = useState('')
   const [hwIds, setHwIds] = useState(row.hw_ids || [])
   const [dlLogs, setDlLogs] = useState([])
   const [dlLoading, setDlLoading] = useState(true)
@@ -468,6 +473,23 @@ function DetailPanel({ row, onClose, onRefresh }) {
     }).eq('license_key', row.license_key)
     if (error) setEmailErr(`저장 실패: ${error.message}`)
     else { setEmailMsg('이메일 저장됨'); onRefresh() }
+  }
+
+  async function saveBizInfo() {
+    setBizMsg(''); setBizErr('')
+    const bizNoDigits = form.biz_no.replace(/\D/g, '')
+    if (bizNoDigits && bizNoDigits.length !== 10) {
+      setBizErr('사업자등록번호는 숫자 10자리여야 합니다.')
+      return
+    }
+    const { error } = await supabase.from('licenses').update({
+      company_name: form.company_name || null,
+      contact_name: form.contact_name || null,
+      biz_no: bizNoDigits || null,
+      updated_at: new Date().toISOString(),
+    }).eq('license_key', row.license_key)
+    if (error) setBizErr(`저장 실패: ${error.message}`)
+    else { setBizMsg('저장됨'); onRefresh() }
   }
 
   async function resendEmail() {
@@ -658,6 +680,51 @@ function DetailPanel({ row, onClose, onRefresh }) {
           )}
           {emailErr && <p style={styles.errText}>{emailErr}</p>}
           {emailMsg && <p style={styles.okText}>{emailMsg}</p>}
+
+          <hr style={styles.hr} />
+
+          {/* 사업자정보 */}
+          <div style={styles.sectionTitle}>사업자정보</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <div style={styles.field}>
+              <label style={styles.label}>회사명</label>
+              <input
+                type="text"
+                value={form.company_name}
+                onChange={e => setForm(f => ({ ...f, company_name: e.target.value }))}
+                style={styles.input}
+              />
+            </div>
+            <div style={styles.field}>
+              <label style={styles.label}>담당자명</label>
+              <input
+                type="text"
+                value={form.contact_name}
+                onChange={e => setForm(f => ({ ...f, contact_name: e.target.value }))}
+                style={styles.input}
+              />
+            </div>
+            <div style={{ ...styles.field, gridColumn: '1 / -1' }}>
+              <label style={styles.label}>
+                사업자등록번호
+                {row.biz_no && (
+                  <span style={{ marginLeft: 6, fontWeight: 600, color: row.biz_no_verified ? '#15803D' : '#B45309' }}>
+                    {row.biz_no_verified ? '✓ 국세청 확인됨' : '⚠ 미확인'}
+                  </span>
+                )}
+              </label>
+              <input
+                type="text"
+                value={form.biz_no}
+                onChange={e => setForm(f => ({ ...f, biz_no: e.target.value }))}
+                placeholder="000-00-00000"
+                style={styles.input}
+              />
+            </div>
+          </div>
+          <button onClick={saveBizInfo} style={{ ...styles.btnSm, alignSelf: 'flex-start' }}>저장</button>
+          {bizErr && <p style={styles.errText}>{bizErr}</p>}
+          {bizMsg && <p style={styles.okText}>{bizMsg}</p>}
 
           <hr style={styles.hr} />
 
