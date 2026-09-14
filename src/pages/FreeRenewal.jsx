@@ -19,24 +19,30 @@ export default function FreeRenewal() {
   async function fetchLicenses() {
     setLoading(true)
     if (!productCode) { setLicenses([]); setLoading(false); return }
-    let q = supabase
-      .from('licenses')
-      .select('*')
-      .eq('grade', 'FREE')
-      .eq('product_code', productCode)
-      .order('expires_at', { ascending: true, nullsFirst: false })
+    // email이 암호화 컬럼이라(2026-09-13) 직접 조회 대신 admin-licenses 함수가 서버에서
+    // 복호화해 내려준다(LicenseManager.jsx와 동일 패턴). 이 함수는 expires_at 범위 필터를
+    // 지원하지 않으므로 FREE 등급 전체를 받아 만료임박/만료 필터는 그대로 클라이언트에서 적용.
+    const { data: { session } } = await supabase.auth.getSession()
+    const { data } = await supabase.functions.invoke('admin-licenses', {
+      body: { action: 'list', productCode, filter: { grade: 'FREE' }, page: 0, pageSize: 1000 },
+      headers: session ? { Authorization: `Bearer ${session.access_token}` } : {},
+    })
+    let rows = (data?.rows || []).slice().sort((a, b) => {
+      if (!a.expires_at) return 1
+      if (!b.expires_at) return -1
+      return a.expires_at.localeCompare(b.expires_at)
+    })
 
     const now   = new Date()
     const in30  = new Date(now); in30.setDate(in30.getDate() + 30)
 
     if (filter === 'expiring') {
-      q = q.lte('expires_at', in30.toISOString()).gte('expires_at', now.toISOString())
+      rows = rows.filter(r => r.expires_at && r.expires_at <= in30.toISOString() && r.expires_at >= now.toISOString())
     } else if (filter === 'expired') {
-      q = q.lt('expires_at', now.toISOString())
+      rows = rows.filter(r => r.expires_at && r.expires_at < now.toISOString())
     }
 
-    const { data } = await q
-    setLicenses(data || [])
+    setLicenses(rows)
     setLoading(false)
   }
 

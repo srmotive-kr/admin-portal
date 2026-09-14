@@ -32,12 +32,20 @@ export default function Dashboard() {
       const in30 = new Date(Date.now() + 30 * 86400000).toISOString()
       const scope = (q) => q.eq('product_code', productCode)
 
+      // email이 암호화 컬럼이라(2026-09-13) 직접 조회 대신 admin-licenses 함수가 서버에서
+      // 복호화해 내려준다(LicenseManager.jsx와 동일 패턴) — 최근 10건만 필요하므로 pageSize=10.
+      const { data: { session } } = await supabase.auth.getSession()
+      const eventsPromise = supabase.functions.invoke('admin-licenses', {
+        body: { action: 'list', productCode, filter: {}, page: 0, pageSize: 10 },
+        headers: session ? { Authorization: `Bearer ${session.access_token}` } : {},
+      })
+
       const [activeRes, newRes, expiringRes, pendingRes, eventsRes] = await Promise.all([
         scope(supabase.from('licenses').select('id', { count: 'exact', head: true }).eq('status', 'ACTIVE')),
         scope(supabase.from('licenses').select('id', { count: 'exact', head: true }).eq('status', 'ACTIVE').gte('created_at', monthStart)),
         scope(supabase.from('licenses').select('id', { count: 'exact', head: true }).eq('status', 'ACTIVE').not('expires_at', 'is', null).lte('expires_at', in30)),
         scope(supabase.from('licenses').select('id', { count: 'exact', head: true }).eq('status', 'PENDING')),
-        scope(supabase.from('licenses').select('license_key, grade, status, email, created_at')).order('created_at', { ascending: false }).limit(10),
+        eventsPromise,
       ])
 
       setStats({
@@ -46,7 +54,7 @@ export default function Dashboard() {
         expiringSoon: expiringRes.count,
         pending: pendingRes.count,
       })
-      setEvents(eventsRes.data || [])
+      setEvents(eventsRes.data?.rows || [])
       setLoading(false)
     }
     load()
