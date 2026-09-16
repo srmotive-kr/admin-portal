@@ -35,7 +35,25 @@ export function issueLimitsFor(productCode, grade) {
 
 const GRADES = ['', ...DEFAULT_GRADE_OPTIONS]
 const STATUSES = ['', 'ACTIVE', 'PENDING', 'EXPIRED', 'REVOKED']
-const CHANNELS = ['', 'A', 'B', 'C', 'E']
+
+// 채널 스킴 재정비(2026-09-16) — 예전 'A'/'E'(마켓/오프라인 수동발급)와 'WEB_FREE'/'WEB_ORDER'
+// 두 체계가 뒤섞여 있었고, 목록 화면엔 'WEB_ORDER' 같은 원본값이 그대로 찍히는데 검색 필터는
+// 'A'/'B'/'C'/'E'만 제공해 실제 값의 절반을 걸러낼 수 없던 문제를 고쳤다. APP_FREE_EXT는
+// 앱 내 브라우저창을 통한 FREE 갱신용으로 예약해둔 값 — 결제 없는 갱신 경로가 아직
+// 구현되지 않아 현재는 코드에서 실제로 부여되는 곳이 없다.
+const CHANNEL_LABELS = {
+  ADMIN_MKT: '마켓플레이스(수동)',
+  ADMIN_OFFLINE: '오프라인/USB(수동)',
+  WEB_FREE: '웹 무료신청',
+  WEB_ORDER: '웹 결제',
+  APP_FREE_EXT: '앱내 FREE갱신(예약)',
+  APP_ORDER_EXT: '앱내 결제',
+}
+const CHANNELS = ['', ...Object.keys(CHANNEL_LABELS)]
+function channelLabel(c) {
+  if (!c) return '—'
+  return CHANNEL_LABELS[c] || c
+}
 
 function GradeBadge({ grade }) {
   const map = { FREE: ['#EFF6FF', '#1D4ED8'], PRO: ['#F0FDF4', '#15803D'], ENTERPRISE: ['#FAF5FF', '#7E22CE'], STARTER: ['#FFF7ED', '#C2410C'] }
@@ -84,7 +102,9 @@ export default function LicenseManager() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [selected, setSelected] = useState(null)
-  const [showIssueModal, setShowIssueModal] = useState(false)
+  // 채널 스킴 재정비(2026-09-16) — "+ 수동 발급" 하나였던 버튼을 마켓플레이스/오프라인
+  // 두 경로로 이원화. null=닫힘, 'ADMIN_MKT'|'ADMIN_OFFLINE'=해당 채널로 발급 모달 오픈.
+  const [issueChannel, setIssueChannel] = useState(null)
   const [filter, setFilter] = useState({ q: '', grade: '', status: '', channel: '' })
   const [page, setPage] = useState(0)
   const [dateField, setDateField] = useState('created_at') // created_at(발급일) | expires_at(만료일) — 입력 중인 값
@@ -190,7 +210,10 @@ export default function LicenseManager() {
     <div>
       <div style={styles.header}>
         <h1 style={styles.pageTitle}>라이선스 관리 <span style={styles.totalBadge}>{total}건</span></h1>
-        <button style={styles.btnPrimary} onClick={() => setShowIssueModal(true)}>+ 수동 발급</button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button style={styles.btnPrimary} onClick={() => setIssueChannel('ADMIN_MKT')}>+ 마켓플레이스 발급</button>
+          <button style={styles.btnPrimary} onClick={() => setIssueChannel('ADMIN_OFFLINE')}>+ 오프라인 발급</button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -211,7 +234,7 @@ export default function LicenseManager() {
         </select>
         <select value={filter.channel} onChange={e => { setFilter(f => ({ ...f, channel: e.target.value })); setPage(0) }} style={styles.select}>
           <option value="">채널 전체</option>
-          {CHANNELS.filter(Boolean).map(c => <option key={c} value={c}>채널 {c}</option>)}
+          {CHANNELS.filter(Boolean).map(c => <option key={c} value={c}>{channelLabel(c)}</option>)}
         </select>
         <select value={dateField} onChange={e => setDateField(e.target.value)} style={styles.select}>
           <option value="created_at">발급일</option>
@@ -294,7 +317,7 @@ export default function LicenseManager() {
                 <span style={{ flex: 3, fontFamily: 'monospace', fontSize: 12, color: 'var(--gray-700)' }}>{row.license_key}</span>
                 <span style={{ flex: 1 }}><GradeBadge grade={row.grade} /></span>
                 <span style={{ flex: 3, color: 'var(--gray-600)' }}>{row.email || '—'}</span>
-                <span style={{ flex: 1, color: 'var(--gray-500)' }}>{row.channel ? `채널 ${row.channel}` : '—'}</span>
+                <span style={{ flex: 1, color: 'var(--gray-500)' }}>{channelLabel(row.channel)}</span>
                 <span style={{ flex: 1, textAlign: 'center', fontSize: 12, color: row.hw_ids?.length > 0 ? 'var(--blue-700)' : 'var(--gray-300)' }}>
                   {row.hw_ids?.length > 0 ? `${row.hw_ids.length}대` : '—'}
                 </span>
@@ -316,7 +339,7 @@ export default function LicenseManager() {
       </div>
 
       {selected && <DetailPanel row={selected} onClose={() => setSelected(null)} onRefresh={load} />}
-      {showIssueModal && <IssueModal onClose={() => setShowIssueModal(false)} onRefresh={load} />}
+      {issueChannel && <IssueModal channel={issueChannel} onClose={() => setIssueChannel(null)} onRefresh={load} />}
       {showExtendModal && (
         <ExtendExpiryModal
           targets={checked}
@@ -432,6 +455,7 @@ function DetailPanel({ row, onClose, onRefresh }) {
     company_name: row.company_name || '',
     contact_name: row.contact_name || '',
     biz_no: row.biz_no || '',
+    phone: row.phone || '',
   })
   const [bizMsg, setBizMsg] = useState('')
   const [bizErr, setBizErr] = useState('')
@@ -447,6 +471,25 @@ function DetailPanel({ row, onClose, onRefresh }) {
   const [unlockEmailSent, setUnlockEmailSent] = useState(false)
   const [unlockMaskedEmail, setUnlockMaskedEmail] = useState('')
 
+  const [purchLogs, setPurchLogs] = useState([])
+  const [purchLoading, setPurchLoading] = useState(true)
+  const [cancelingUid, setCancelingUid] = useState(null)
+  const [cancelReason, setCancelReason] = useState('')
+  const [cancelLoading, setCancelLoading] = useState(false)
+  const [cancelErr, setCancelErr] = useState('')
+  const [cancelMsg, setCancelMsg] = useState('')
+
+  function loadPurchaseHistory() {
+    setPurchLoading(true)
+    supabase.from('purchase_history')
+      .select('merchant_uid, grade, term_years, amount_paid, revival_promo_used, paid_at, channel, change_type')
+      .eq('license_key', row.license_key)
+      .eq('status', 'PAID')
+      .order('paid_at', { ascending: false })
+      .limit(10)
+      .then(({ data }) => { setPurchLogs(data || []); setPurchLoading(false) })
+  }
+
   useEffect(() => {
     supabase.from('download_logs')
       .select('version, downloaded_at')
@@ -454,22 +497,55 @@ function DetailPanel({ row, onClose, onRefresh }) {
       .order('downloaded_at', { ascending: false })
       .limit(10)
       .then(({ data }) => { setDlLogs(data || []); setDlLoading(false) })
+
+    loadPurchaseHistory()
   }, [row.license_key])
+
+  // 응급용 결제 취소 — 중복결제/오류결제 등 운영자가 예외적으로 처리해야 하는 상황 전용
+  // (정상적인 고객 환불 경로가 아님, cancel-payment 함수 주석 참고).
+  async function cancelPurchase(merchantUid) {
+    if (!cancelReason.trim()) { setCancelErr('취소 사유를 입력해주세요.'); return }
+    setCancelLoading(true); setCancelErr(''); setCancelMsg('')
+    const { data: { session } } = await supabase.auth.getSession()
+    const { data, error } = await supabase.functions.invoke('cancel-payment', {
+      body: { merchant_uid: merchantUid, reason: cancelReason.trim() },
+      headers: session ? { Authorization: `Bearer ${session.access_token}` } : {},
+    })
+    setCancelLoading(false)
+    if (error) {
+      let detail = error.message
+      try { const b = await error.context?.json(); if (b?.error) detail = b.error } catch {}
+      setCancelErr(`취소 실패: ${detail}`)
+      return
+    }
+    setCancelMsg(data?.note || '결제가 취소되었습니다.')
+    setCancelingUid(null); setCancelReason('')
+    loadPurchaseHistory()
+    onRefresh()
+  }
 
   async function save() {
     setSaving(true); setSaveMsg(''); setSaveErr('')
-    const { error } = await supabase.from('licenses').update({
-      grade: form.grade,
-      status: form.status,
-      expires_at: form.expires_at || null,
-      notes: form.notes || null,
-      max_emps: form.max_emps !== '' ? Number(form.max_emps) : null,
-      max_users: form.max_users !== '' ? Number(form.max_users) : null,
-      updated_at: new Date().toISOString(),
-    }).eq('license_key', row.license_key)
+    // 구매 이력에 수동 조정 이력도 남기려면 변경 전 값과 비교해야 해서(2026-09-16),
+    // 이제 admin-licenses의 update_license 액션(서비스롤)을 거친다 — 등급/만료일이 실제로
+    // 바뀐 경우에만 purchase_history에 ADMIN_UPDATE 행을 추가로 남긴다.
+    const { data: { session } } = await supabase.auth.getSession()
+    const { error } = await supabase.functions.invoke('admin-licenses', {
+      body: {
+        action: 'update_license', license_key: row.license_key,
+        grade: form.grade, status: form.status,
+        expires_at: form.expires_at || null, notes: form.notes || null,
+        max_emps: form.max_emps !== '' ? Number(form.max_emps) : null,
+        max_users: form.max_users !== '' ? Number(form.max_users) : null,
+      },
+      headers: session ? { Authorization: `Bearer ${session.access_token}` } : {},
+    })
     setSaving(false)
-    if (error) setSaveErr(`저장 실패: ${error.message}`)
-    else { setSaveMsg('저장됨'); onRefresh() }
+    if (error) {
+      let detail = error.message
+      try { const b = await error.context?.json(); if (b?.error) detail = b.error } catch {}
+      setSaveErr(`저장 실패: ${detail}`)
+    } else { setSaveMsg('저장됨'); onRefresh() }
   }
 
   async function saveEmail() {
@@ -498,6 +574,7 @@ function DetailPanel({ row, onClose, onRefresh }) {
       body: {
         action: 'update_biz_info', license_key: row.license_key,
         company_name: form.company_name || null, contact_name: form.contact_name || null, biz_no: bizNoDigits || null,
+        phone: form.phone || null,
       },
       headers: session ? { Authorization: `Bearer ${session.access_token}` } : {},
     })
@@ -604,7 +681,7 @@ function DetailPanel({ row, onClose, onRefresh }) {
           </div>
           <div style={styles.infoRow}>
             <span style={styles.infoKey}>채널</span>
-            <span style={{ fontSize: 13 }}>{row.channel ? `채널 ${row.channel}` : '—'}</span>
+            <span style={{ fontSize: 13 }}>{channelLabel(row.channel)}</span>
           </div>
           <div style={styles.infoRow}>
             <span style={styles.infoKey}>마지막 실행</span>
@@ -666,7 +743,7 @@ function DetailPanel({ row, onClose, onRefresh }) {
           {saveErr && <p style={styles.errText}>{saveErr}</p>}
           {saveMsg && <p style={styles.okText}>{saveMsg}</p>}
           <button onClick={save} disabled={saving} style={{ ...styles.btnPrimary, width: '100%' }}>
-            {saving ? '저장 중...' : '저장'}
+            {saving ? '저장 중...' : '라이선스정보 저장'}
           </button>
 
           <hr style={styles.hr} />
@@ -681,7 +758,7 @@ function DetailPanel({ row, onClose, onRefresh }) {
               placeholder="customer@example.com"
               style={{ ...styles.input, flex: 1 }}
             />
-            <button onClick={saveEmail} style={{ ...styles.btnSm, whiteSpace: 'nowrap' }}>저장</button>
+            <button onClick={saveEmail} style={{ ...styles.btnSmPrimary, whiteSpace: 'nowrap' }}>이메일저장</button>
             <button onClick={resendEmail} style={{ ...styles.btnSm, whiteSpace: 'nowrap' }}>재발송</button>
           </div>
           {row.expires_at && dDayFor(row.expires_at) >= 0 && (
@@ -712,15 +789,6 @@ function DetailPanel({ row, onClose, onRefresh }) {
               />
             </div>
             <div style={styles.field}>
-              <label style={styles.label}>담당자명</label>
-              <input
-                type="text"
-                value={form.contact_name}
-                onChange={e => setForm(f => ({ ...f, contact_name: e.target.value }))}
-                style={styles.input}
-              />
-            </div>
-            <div style={{ ...styles.field, gridColumn: '1 / -1' }}>
               <label style={styles.label}>
                 사업자등록번호
                 {row.biz_no && (
@@ -737,8 +805,27 @@ function DetailPanel({ row, onClose, onRefresh }) {
                 style={styles.input}
               />
             </div>
+            <div style={styles.field}>
+              <label style={styles.label}>담당자명</label>
+              <input
+                type="text"
+                value={form.contact_name}
+                onChange={e => setForm(f => ({ ...f, contact_name: e.target.value }))}
+                style={styles.input}
+              />
+            </div>
+            <div style={styles.field}>
+              <label style={styles.label}>휴대폰 번호</label>
+              <input
+                type="text"
+                value={form.phone}
+                onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
+                placeholder="010-0000-0000"
+                style={styles.input}
+              />
+            </div>
           </div>
-          <button onClick={saveBizInfo} style={{ ...styles.btnSm, alignSelf: 'flex-start' }}>저장</button>
+          <button onClick={saveBizInfo} style={{ ...styles.btnSmPrimary, alignSelf: 'flex-start' }}>사업자정보 저장</button>
           {bizErr && <p style={styles.errText}>{bizErr}</p>}
           {bizMsg && <p style={styles.okText}>{bizMsg}</p>}
 
@@ -786,6 +873,72 @@ function DetailPanel({ row, onClose, onRefresh }) {
                 </div>
               ))
           }
+
+          <hr style={styles.hr} />
+
+          {/* 구매 이력 */}
+          <div style={styles.sectionTitle}>구매 이력</div>
+          {purchLoading
+            ? <p style={{ fontSize: 12, color: 'var(--gray-400)', margin: 0 }}>로딩 중...</p>
+            : purchLogs.length === 0
+              ? <p style={{ fontSize: 12, color: 'var(--gray-400)', margin: 0 }}>구매 이력 없음</p>
+              : purchLogs.map((log, i) => (
+                <div key={i} style={{ fontSize: 12, color: 'var(--gray-600)', padding: '7px 0', borderBottom: '1px solid var(--gray-50)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <span style={{ fontWeight: 700 }}>
+                      {log.grade}{log.term_years > 0 ? ` · ${log.term_years}년` : ''}
+                      {log.change_type === 'ADMIN_ISSUE' && ' · 수동발급'}
+                      {log.change_type === 'ADMIN_UPDATE' && ' · 수동조정'}
+                    </span>
+                    <span>{new Date(log.paid_at).toLocaleString('ko-KR')}</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 2 }}>
+                    <span style={{ color: 'var(--gray-400)' }}>{channelLabel(log.channel)}</span>
+                    <span style={{ color: log.revival_promo_used ? '#B45309' : 'var(--gray-400)' }}>
+                      {log.revival_promo_used ? '스페셜 프로모션' : '—'}
+                    </span>
+                    <span style={{ fontWeight: 700, color: 'var(--gray-700)' }}>
+                      {log.amount_paid != null ? `${Number(log.amount_paid).toLocaleString('ko-KR')}원` : '—'}
+                    </span>
+                  </div>
+                  {(log.change_type === 'NEW' || log.change_type === 'RENEW' || log.change_type === 'UPGRADE') && (cancelingUid === log.merchant_uid ? (
+                    <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <input
+                        type="text"
+                        value={cancelReason}
+                        onChange={e => setCancelReason(e.target.value)}
+                        placeholder="취소 사유 (예: 중복결제)"
+                        style={styles.input}
+                      />
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button
+                          onClick={() => cancelPurchase(log.merchant_uid)}
+                          disabled={cancelLoading}
+                          style={{ ...styles.btnSm, color: 'var(--red-500)', borderColor: 'var(--red-200)', flex: 1, textAlign: 'center' }}
+                        >
+                          {cancelLoading ? '취소 처리 중...' : '결제 취소 확정'}
+                        </button>
+                        <button
+                          onClick={() => { setCancelingUid(null); setCancelReason(''); setCancelErr('') }}
+                          style={{ ...styles.btnSm, flex: 1, textAlign: 'center' }}
+                        >
+                          닫기
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => { setCancelingUid(log.merchant_uid); setCancelReason(''); setCancelErr(''); setCancelMsg('') }}
+                      style={{ ...styles.btnSm, marginTop: 6, fontSize: 11, padding: '2px 8px', color: 'var(--red-500)', borderColor: 'var(--red-200)' }}
+                    >
+                      결제 취소
+                    </button>
+                  ))}
+                </div>
+              ))
+          }
+          {cancelErr && <p style={styles.errText}>{cancelErr}</p>}
+          {cancelMsg && <p style={styles.okText}>{cancelMsg}</p>}
 
           <hr style={styles.hr} />
 
@@ -848,10 +1001,19 @@ function DetailPanel({ row, onClose, onRefresh }) {
   )
 }
 
-function IssueModal({ onClose, onRefresh }) {
+// 만료일 기본값 — 발급 시점 + 1년(2026-09-16, 매번 직접 입력하던 것을 기본값으로 채우되
+// 여전히 수정 가능하게 함). "비워두면 무기한"은 그대로 유효 — 이 기본값을 지우고 제출하면
+// 이전처럼 무기한으로 발급된다.
+function defaultExpiresAt() {
+  const d = new Date()
+  d.setFullYear(d.getFullYear() + 1)
+  return d.toISOString().slice(0, 10)
+}
+
+function IssueModal({ channel, onClose, onRefresh }) {
   const { productCode, current } = useProduct()
   const prefix = current?.license_prefix || 'SMHR'
-  const [form, setForm] = useState({ grade: 'FREE', email: '', expires_at: '', notes: '', channel: 'A' })
+  const [form, setForm] = useState({ grade: 'FREE', email: '', expires_at: defaultExpiresAt(), notes: '' })
   const [saving, setSaving] = useState(false)
   const [done, setDone] = useState(null)
   const [issueError, setIssueError] = useState('')
@@ -864,7 +1026,7 @@ function IssueModal({ onClose, onRefresh }) {
     const { data: res, error } = await supabase.functions.invoke('admin-licenses', {
       body: {
         action: 'create', license_key: key, grade: form.grade, email: form.email || null,
-        expires_at: form.expires_at || null, notes: form.notes || null, channel: form.channel,
+        expires_at: form.expires_at || null, notes: form.notes || null, channel,
         product_code: productCode, ...issueLimitsFor(productCode, form.grade),
       },
       headers: session ? { Authorization: `Bearer ${session.access_token}` } : {},
@@ -918,7 +1080,7 @@ function IssueModal({ onClose, onRefresh }) {
     <div style={styles.overlay} onClick={onClose}>
       <div style={{ ...styles.panel, width: 440 }} onClick={e => e.stopPropagation()}>
         <div style={styles.panelHeader}>
-          <h3 style={{ fontSize: 15, fontWeight: 700 }}>수동 라이선스 발급</h3>
+          <h3 style={{ fontSize: 15, fontWeight: 700 }}>수동 라이선스 발급 — {channelLabel(channel)}</h3>
           <button onClick={onClose} style={styles.closeBtn}>✕</button>
         </div>
         <div style={styles.panelBody}>
@@ -926,13 +1088,6 @@ function IssueModal({ onClose, onRefresh }) {
             <label style={styles.label}>등급 *</label>
             <select value={form.grade} onChange={e => setForm(f => ({ ...f, grade: e.target.value }))} style={styles.input}>
               {gradeOptionsFor(productCode).map(g => <option key={g} value={g}>{g}</option>)}
-            </select>
-          </div>
-          <div style={styles.field}>
-            <label style={styles.label}>채널</label>
-            <select value={form.channel} onChange={e => setForm(f => ({ ...f, channel: e.target.value }))} style={styles.input}>
-              <option value="A">A — 마켓플레이스</option>
-              <option value="E">E — 오프라인/USB</option>
             </select>
           </div>
           <div style={styles.field}>
@@ -999,6 +1154,7 @@ const styles = {
   closeBtn: { background: 'none', border: 'none', fontSize: 16, color: 'var(--gray-400)', padding: 4 },
   btnPrimary: { background: 'var(--blue-700)', color: 'white', border: 'none', borderRadius: 9, padding: '10px 18px', fontSize: 13, fontWeight: 700, cursor: 'pointer' },
   btnSm: { background: 'white', border: '1px solid var(--blue-200)', color: 'var(--blue-700)', borderRadius: 6, padding: '4px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer' },
+  btnSmPrimary: { background: 'var(--blue-700)', border: 'none', color: 'white', borderRadius: 6, padding: '4px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer' },
   hr: { margin: '4px 0', border: 'none', borderTop: '1px solid var(--gray-100)' },
   sectionTitle: { fontSize: 11, fontWeight: 700, color: 'var(--gray-400)', textTransform: 'uppercase', letterSpacing: '0.05em' },
   errText: { fontSize: 12, color: 'var(--red-500)', background: 'var(--red-100)', borderRadius: 8, padding: '7px 12px', margin: 0 },
