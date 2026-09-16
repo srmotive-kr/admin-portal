@@ -470,6 +470,10 @@ function DetailPanel({ row, onClose, onRefresh }) {
   const [unlockErr, setUnlockErr] = useState('')
   const [unlockEmailSent, setUnlockEmailSent] = useState(false)
   const [unlockMaskedEmail, setUnlockMaskedEmail] = useState('')
+  // 기본은 발송(기존 동작 유지) — §3-7 "2차 운영자 수동 개입" 절차처럼 등록 이메일 자체를
+  // 더는 신뢰할 수 없는 상황에서만 체크 해제해서 그 이메일로 코드가 새어나가는 걸 막는다
+  // (보안점검_2026-09-10.md §3-7 기존 결함, 2026-09-16 반영).
+  const [unlockSendEmail, setUnlockSendEmail] = useState(true)
 
   const [purchLogs, setPurchLogs] = useState([])
   const [purchLoading, setPurchLoading] = useState(true)
@@ -551,7 +555,7 @@ function DetailPanel({ row, onClose, onRefresh }) {
   async function saveEmail() {
     setEmailMsg(''); setEmailErr('')
     const { data: { session } } = await supabase.auth.getSession()
-    const { error } = await supabase.functions.invoke('admin-licenses', {
+    const { data, error } = await supabase.functions.invoke('admin-licenses', {
       body: { action: 'update_email', license_key: row.license_key, email: form.email || null },
       headers: session ? { Authorization: `Bearer ${session.access_token}` } : {},
     })
@@ -559,7 +563,12 @@ function DetailPanel({ row, onClose, onRefresh }) {
       let detail = error.message
       try { const b = await error.context?.json(); if (b?.error) detail = b.error } catch {}
       setEmailErr(`저장 실패: ${detail}`)
-    } else { setEmailMsg('이메일 저장됨'); onRefresh() }
+    } else {
+      // 서버가 이메일 변경 시 이전 이메일을 메모에 날짜와 함께 누적 기록해 돌려준다 —
+      // 새로고침 없이도 바로 보이도록 로컬 상태에 반영(2026-09-16).
+      if (data?.notes !== undefined) setForm(f => ({ ...f, notes: data.notes || '' }))
+      setEmailMsg('이메일 저장됨'); onRefresh()
+    }
   }
 
   async function saveBizInfo() {
@@ -644,7 +653,7 @@ function DetailPanel({ row, onClose, onRefresh }) {
     setUnlockLoading(true); setUnlockCode(''); setUnlockErr(''); setUnlockEmailSent(false); setUnlockMaskedEmail('')
     const { data: { session } } = await supabase.auth.getSession()
     const { error, data } = await supabase.functions.invoke('generate-unlock-code', {
-      body: { license_key: row.license_key },
+      body: { license_key: row.license_key, send_email: unlockSendEmail },
       headers: session ? { Authorization: `Bearer ${session.access_token}` } : {},
     })
     setUnlockLoading(false)
@@ -945,8 +954,7 @@ function DetailPanel({ row, onClose, onRefresh }) {
           {/* ADMIN 언락 코드 발급 */}
           <div style={styles.sectionTitle}>ADMIN 잠금 해제</div>
           <div style={{ fontSize: 12, color: 'var(--gray-500)', lineHeight: 1.6, marginBottom: 8 }}>
-            고객 ADMIN 계정이 비밀번호 오류로 잠긴 경우,<br />
-            코드를 발급하면 등록 이메일로 자동 발송됩니다. (30분 유효)
+            고객 ADMIN 계정이 비밀번호 오류로 잠긴 경우 코드를 발급합니다. (30분 유효)
           </div>
           {unlockCode ? (
             <div style={{ background: '#F5F3FF', border: '1px solid #DDD6FE', borderRadius: 10, padding: '14px', textAlign: 'center' }}>
@@ -955,11 +963,22 @@ function DetailPanel({ row, onClose, onRefresh }) {
               <div style={{ fontSize: 11, color: 'var(--gray-400)', marginTop: 6 }}>고객이 앱 복구 화면에 입력</div>
               {unlockEmailSent
                 ? <div style={{ marginTop: 8, fontSize: 11, color: '#15803D', fontWeight: 600 }}>📧 {unlockMaskedEmail} 으로 자동 발송됨</div>
-                : <div style={{ marginTop: 8, fontSize: 11, color: '#B45309' }}>⚠ 등록 이메일 없음 — 코드를 직접 전달하세요</div>
+                : unlockSendEmail
+                  ? <div style={{ marginTop: 8, fontSize: 11, color: '#B45309' }}>⚠ 등록 이메일 없음 — 코드를 직접 전달하세요</div>
+                  : <div style={{ marginTop: 8, fontSize: 11, color: '#B45309' }}>⚠ 등록 이메일 발송 안 함(선택 해제) — 코드를 직접 전달하세요</div>
               }
             </div>
           ) : (
             <>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--gray-600)', marginBottom: 8 }}>
+                <input type="checkbox" checked={unlockSendEmail} onChange={e => setUnlockSendEmail(e.target.checked)} />
+                등록 이메일로도 발송
+              </label>
+              {!unlockSendEmail && (
+                <p style={{ fontSize: 11, color: '#B45309', margin: '0 0 8px' }}>
+                  등록 이메일 자체를 신뢰할 수 없는 상황(2차 본인확인 절차)에서만 해제하세요 — 코드는 여기 화면에만 표시되고, 직접 전달해야 합니다.
+                </p>
+              )}
               <button
                 onClick={generateUnlockCode}
                 disabled={unlockLoading}
