@@ -475,6 +475,12 @@ function DetailPanel({ row, onClose, onRefresh }) {
   // (보안점검_2026-09-10.md §3-7 기존 결함, 2026-09-16 반영).
   const [unlockSendEmail, setUnlockSendEmail] = useState(true)
 
+  // DEK 복구키 수동조회(§3-8, 2026-09-17) — 이메일 자동복구가 막혔을 때의 2차 운영자 개입.
+  const [dekReason, setDekReason] = useState('')
+  const [dekKey, setDekKey] = useState('')
+  const [dekLoading, setDekLoading] = useState(false)
+  const [dekErr, setDekErr] = useState('')
+
   const [purchLogs, setPurchLogs] = useState([])
   const [purchLoading, setPurchLoading] = useState(true)
   const [cancelingUid, setCancelingUid] = useState(null)
@@ -668,6 +674,24 @@ function DetailPanel({ row, onClose, onRefresh }) {
       setUnlockEmailSent(true)
       setUnlockMaskedEmail(data.maskedEmail)
     }
+  }
+
+  async function fetchDekRecoveryKey() {
+    if (!dekReason.trim()) { setDekErr('조회 사유를 입력해주세요.'); return }
+    setDekLoading(true); setDekErr(''); setDekKey('')
+    const { data: { session } } = await supabase.auth.getSession()
+    const { data, error } = await supabase.functions.invoke('admin-licenses', {
+      body: { action: 'get_dek_recovery_key', license_key: row.license_key, reason: dekReason.trim() },
+      headers: session ? { Authorization: `Bearer ${session.access_token}` } : {},
+    })
+    setDekLoading(false)
+    if (error) {
+      let detail = error.message
+      try { const b = await error.context?.json(); if (b?.error) detail = b.error } catch {}
+      setDekErr(detail)
+      return
+    }
+    setDekKey(data.recoveryKey)
   }
 
   return (
@@ -987,6 +1011,50 @@ function DetailPanel({ row, onClose, onRefresh }) {
                 {unlockLoading ? '발급 중...' : '🔓 언락 코드 발급'}
               </button>
               {unlockErr && <p style={styles.errText}>{unlockErr}</p>}
+            </>
+          )}
+
+          <hr style={styles.hr} />
+
+          {/* DEK 복구키 수동조회 — 이메일 자동복구(고객 셀프서비스)가 막혔을 때의 2차 운영자
+              개입 경로. DEK는 고객 로컬 DB 전체를 여는 마스터키라 위 ADMIN 언락 코드보다
+              훨씬 민감함 — 조회 사유를 필수로 받고 notes에 조회 이력을 남긴다. */}
+          <div style={styles.sectionTitle}>DEK 복구키 수동조회</div>
+          <div style={{ fontSize: 12, color: 'var(--gray-500)', lineHeight: 1.6, marginBottom: 8 }}>
+            고객이 PC교체 등으로 로컬 DB를 못 열고, 이메일 자동복구도 안 될 때만 사용합니다.
+            실행 전 반드시 통화 등 별도 채널로 담당자 본인 확인을 먼저 완료하세요.
+          </div>
+          {dekKey ? (
+            <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 10, padding: '14px', textAlign: 'center' }}>
+              <div style={{ fontSize: 11, color: '#B91C1C', fontWeight: 600, marginBottom: 6 }}>DEK 복구키</div>
+              <div style={{ fontSize: 20, fontWeight: 900, letterSpacing: 2, color: '#B91C1C', fontFamily: 'monospace', wordBreak: 'break-all' }}>{dekKey}</div>
+              <div style={{ fontSize: 11, color: 'var(--gray-500)', marginTop: 8, lineHeight: 1.6 }}>
+                고객이 앱의 "복구키를 알고 있습니다" 화면에 그대로 입력합니다.<br />
+                이메일·슬랙 등에 평문으로 남기지 말고, 통화 등으로만 전달하세요.
+              </div>
+              <button
+                onClick={() => { setDekKey(''); setDekReason('') }}
+                style={{ ...styles.btnSm, marginTop: 10, width: '100%', textAlign: 'center' }}
+              >
+                화면에서 지우기
+              </button>
+            </div>
+          ) : (
+            <>
+              <textarea
+                value={dekReason}
+                onChange={e => setDekReason(e.target.value)}
+                placeholder="조회 사유(예: PC 교체, 전화 통화로 본인확인 완료)"
+                style={{ ...styles.input, height: 48, resize: 'vertical', marginBottom: 8 }}
+              />
+              <button
+                onClick={fetchDekRecoveryKey}
+                disabled={dekLoading || !dekReason.trim()}
+                style={{ ...styles.btnSm, color: '#B91C1C', borderColor: '#FECACA', width: '100%', padding: '9px', textAlign: 'center' }}
+              >
+                {dekLoading ? '조회 중...' : '🔑 DEK 복구키 조회'}
+              </button>
+              {dekErr && <p style={styles.errText}>{dekErr}</p>}
             </>
           )}
 
