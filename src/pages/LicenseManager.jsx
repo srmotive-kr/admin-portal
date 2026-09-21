@@ -63,6 +63,7 @@ function GradeBadge({ grade }) {
 
 const STATUS_LABELS = { ACTIVE: '활성', PENDING: '대기', EXPIRED: '만료', REVOKED: '취소', DELETED: '삭제됨' }
 function statusLabel(s) { return STATUS_LABELS[s] || s }
+function statusOptionLabel(s) { return `${statusLabel(s)}(${s})` }
 
 const PURCH_STATUS_LABELS = { PAID: '결제완료', PENDING: '결제대기', CANCELLED: '취소됨', FAILED: '실패' }
 const PURCH_STATUS_COLORS = { PAID: '#15803D', PENDING: '#A16207', CANCELLED: 'var(--gray-400)', FAILED: 'var(--red-500)' }
@@ -238,7 +239,7 @@ export default function LicenseManager() {
         </select>
         <select value={filter.status} onChange={e => { setFilter(f => ({ ...f, status: e.target.value })); setPage(0) }} style={styles.select}>
           <option value="">상태 전체</option>
-          {STATUSES.filter(Boolean).map(s => <option key={s} value={s}>{statusLabel(s)}</option>)}
+          {STATUSES.filter(Boolean).map(s => <option key={s} value={s}>{statusOptionLabel(s)}</option>)}
         </select>
         <select value={filter.channel} onChange={e => { setFilter(f => ({ ...f, channel: e.target.value })); setPage(0) }} style={styles.select}>
           <option value="">채널 전체</option>
@@ -743,7 +744,7 @@ function DetailPanel({ row, onClose, onRefresh }) {
             <div style={styles.field}>
               <label style={styles.label}>상태</label>
               <select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))} style={styles.input}>
-                {['ACTIVE', 'PENDING', 'EXPIRED', 'REVOKED', 'DELETED'].map(s => <option key={s} value={s}>{statusLabel(s)}</option>)}
+                {['ACTIVE', 'PENDING', 'EXPIRED', 'REVOKED', 'DELETED'].map(s => <option key={s} value={s}>{statusOptionLabel(s)}</option>)}
               </select>
             </div>
             <div style={styles.field}>
