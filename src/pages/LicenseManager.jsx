@@ -34,7 +34,7 @@ export function issueLimitsFor(productCode, grade) {
 }
 
 const GRADES = ['', ...DEFAULT_GRADE_OPTIONS]
-const STATUSES = ['', 'ACTIVE', 'PENDING', 'EXPIRED', 'REVOKED']
+const STATUSES = ['', 'ACTIVE', 'PENDING', 'EXPIRED', 'REVOKED', 'DELETED']
 
 // 채널 스킴 재정비(2026-09-16) — 예전 'A'/'E'(마켓/오프라인 수동발급)와 'WEB_FREE'/'WEB_ORDER'
 // 두 체계가 뒤섞여 있었고, 목록 화면엔 'WEB_ORDER' 같은 원본값이 그대로 찍히는데 검색 필터는
@@ -61,15 +61,23 @@ function GradeBadge({ grade }) {
   return <span style={{ background: bg, color, padding: '2px 8px', borderRadius: 100, fontSize: 11, fontWeight: 700 }}>{grade}</span>
 }
 
+const STATUS_LABELS = { ACTIVE: '활성', PENDING: '대기', EXPIRED: '만료', REVOKED: '취소', DELETED: '삭제됨' }
+function statusLabel(s) { return STATUS_LABELS[s] || s }
+
+const PURCH_STATUS_LABELS = { PAID: '결제완료', PENDING: '결제대기', CANCELLED: '취소됨', FAILED: '실패' }
+const PURCH_STATUS_COLORS = { PAID: '#15803D', PENDING: '#A16207', CANCELLED: 'var(--gray-400)', FAILED: 'var(--red-500)' }
+function purchStatusLabel(s) { return PURCH_STATUS_LABELS[s] || s }
+
 function StatusBadge({ status }) {
   const map = {
-    ACTIVE: ['var(--green-100)', '#15803D', '● 활성'],
-    PENDING: ['var(--yellow-100)', '#A16207', '○ 대기'],
-    EXPIRED: ['var(--gray-100)', 'var(--gray-500)', '✕ 만료'],
-    REVOKED: ['var(--red-100)', 'var(--red-500)', '✕ 취소'],
+    ACTIVE: ['var(--green-100)', '#15803D', '●'],
+    PENDING: ['var(--yellow-100)', '#A16207', '○'],
+    EXPIRED: ['var(--gray-100)', 'var(--gray-500)', '✕'],
+    REVOKED: ['var(--red-100)', 'var(--red-500)', '✕'],
+    DELETED: ['var(--gray-200)', 'var(--gray-600)', '🗑'],
   }
-  const [bg, color, label] = map[status] || ['var(--gray-100)', 'var(--gray-500)', status]
-  return <span style={{ background: bg, color, padding: '2px 8px', borderRadius: 100, fontSize: 11, fontWeight: 700 }}>{label}</span>
+  const [bg, color, icon] = map[status] || ['var(--gray-100)', 'var(--gray-500)', '']
+  return <span style={{ background: bg, color, padding: '2px 8px', borderRadius: 100, fontSize: 11, fontWeight: 700 }}>{icon} {statusLabel(status)}</span>
 }
 
 function fmt(iso) {
@@ -230,7 +238,7 @@ export default function LicenseManager() {
         </select>
         <select value={filter.status} onChange={e => { setFilter(f => ({ ...f, status: e.target.value })); setPage(0) }} style={styles.select}>
           <option value="">상태 전체</option>
-          {STATUSES.filter(Boolean).map(s => <option key={s} value={s}>{s}</option>)}
+          {STATUSES.filter(Boolean).map(s => <option key={s} value={s}>{statusLabel(s)}</option>)}
         </select>
         <select value={filter.channel} onChange={e => { setFilter(f => ({ ...f, channel: e.target.value })); setPage(0) }} style={styles.select}>
           <option value="">채널 전체</option>
@@ -492,10 +500,9 @@ function DetailPanel({ row, onClose, onRefresh }) {
   function loadPurchaseHistory() {
     setPurchLoading(true)
     supabase.from('purchase_history')
-      .select('merchant_uid, grade, term_years, amount_paid, revival_promo_used, paid_at, channel, change_type')
+      .select('merchant_uid, grade, term_years, amount_paid, amount_expected, revival_promo_used, paid_at, created_at, channel, change_type, status, cancel_reason, cancelled_at')
       .eq('license_key', row.license_key)
-      .eq('status', 'PAID')
-      .order('paid_at', { ascending: false })
+      .order('created_at', { ascending: false })
       .limit(10)
       .then(({ data }) => { setPurchLogs(data || []); setPurchLoading(false) })
   }
@@ -650,8 +657,13 @@ function DetailPanel({ row, onClose, onRefresh }) {
     if (!error) { setHwIds([]); onRefresh() }
   }
 
+  // 하드 삭제 대신 status='DELETED'로 표시만 한다(2026-09-21) — 실수로 지웠을 때 되돌릴 수
+  // 있어야 하고, purchase_history 등 참조 데이터도 그대로 보존해야 하므로 소프트 삭제로 변경.
+  // 목록에서 사라지지 않고 "삭제됨" 상태로 계속 조회된다.
   async function deleteLicense() {
-    const { error } = await supabase.from('licenses').delete().eq('license_key', row.license_key)
+    const { error } = await supabase.from('licenses').update({
+      status: 'DELETED', updated_at: new Date().toISOString(),
+    }).eq('license_key', row.license_key)
     if (!error) { onRefresh(); onClose() }
   }
 
@@ -731,7 +743,7 @@ function DetailPanel({ row, onClose, onRefresh }) {
             <div style={styles.field}>
               <label style={styles.label}>상태</label>
               <select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))} style={styles.input}>
-                {['ACTIVE', 'PENDING', 'EXPIRED', 'REVOKED'].map(s => <option key={s} value={s}>{s}</option>)}
+                {['ACTIVE', 'PENDING', 'EXPIRED', 'REVOKED', 'DELETED'].map(s => <option key={s} value={s}>{statusLabel(s)}</option>)}
               </select>
             </div>
             <div style={styles.field}>
@@ -909,32 +921,50 @@ function DetailPanel({ row, onClose, onRefresh }) {
 
           <hr style={styles.hr} />
 
-          {/* 구매 이력 */}
+          {/* 구매 이력 — 승인(결제완료)과 취소는 서로 다른 시점에 일어난 별개 사건이므로
+              한 건이 결제 후 취소됐다면 각각 독립된 행으로 나눠 보여준다. */}
           <div style={styles.sectionTitle}>구매 이력</div>
           {purchLoading
             ? <p style={{ fontSize: 12, color: 'var(--gray-400)', margin: 0 }}>로딩 중...</p>
             : purchLogs.length === 0
               ? <p style={{ fontSize: 12, color: 'var(--gray-400)', margin: 0 }}>구매 이력 없음</p>
-              : purchLogs.map((log, i) => (
-                <div key={i} style={{ fontSize: 12, color: 'var(--gray-600)', padding: '7px 0', borderBottom: '1px solid var(--gray-50)' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <span style={{ fontWeight: 700 }}>
+              : purchLogs.flatMap(log => (
+                  log.status === 'CANCELLED' && log.paid_at
+                    ? [
+                        { key: `${log.merchant_uid}-cancel`, log, eventType: 'CANCELLED', at: log.cancelled_at },
+                        { key: `${log.merchant_uid}-paid`, log, eventType: 'PAID', at: log.paid_at },
+                      ]
+                    : [{ key: log.merchant_uid, log, eventType: log.status, at: log.paid_at || log.created_at }]
+                )).map(({ key, log, eventType, at }) => (
+                <div key={key} style={{ fontSize: 11.5, color: 'var(--gray-600)', padding: '7px 0', borderBottom: '1px solid var(--gray-50)' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1.15fr 52px 68px 74px', gap: 6, alignItems: 'center' }}>
+                    <span style={{ fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={log.revival_promo_used ? '스페셜 프로모션 적용' : ''}>
                       {log.grade}{log.term_years > 0 ? ` · ${log.term_years}년` : ''}
                       {log.change_type === 'ADMIN_ISSUE' && ' · 수동발급'}
                       {log.change_type === 'ADMIN_UPDATE' && ' · 수동조정'}
+                      {log.revival_promo_used && ' 🎁'}
                     </span>
-                    <span>{new Date(log.paid_at).toLocaleString('ko-KR')}</span>
+                    <span style={{ color: 'var(--gray-400)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={at ? new Date(at).toLocaleString('ko-KR') : ''}>
+                      {at ? fmt(at) : '—'}
+                    </span>
+                    <span style={{ color: PURCH_STATUS_COLORS[eventType] || 'var(--gray-400)', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                      {eventType === 'PAID' ? '✔ 승인' : eventType === 'CANCELLED' ? '✕ 취소' : purchStatusLabel(eventType)}
+                    </span>
+                    <span style={{ color: 'var(--gray-400)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{channelLabel(log.channel)}</span>
+                    <span style={{ fontWeight: 700, color: 'var(--gray-700)', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      {eventType === 'PAID' && log.amount_paid != null
+                        ? `${Number(log.amount_paid).toLocaleString('ko-KR')}원`
+                        : eventType === 'CANCELLED'
+                          ? (log.amount_paid != null ? `-${Number(log.amount_paid).toLocaleString('ko-KR')}원` : '—')
+                          : (log.amount_expected != null ? `예정 ${Number(log.amount_expected).toLocaleString('ko-KR')}원` : '—')}
+                    </span>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 2 }}>
-                    <span style={{ color: 'var(--gray-400)' }}>{channelLabel(log.channel)}</span>
-                    <span style={{ color: log.revival_promo_used ? '#B45309' : 'var(--gray-400)' }}>
-                      {log.revival_promo_used ? '스페셜 프로모션' : '—'}
-                    </span>
-                    <span style={{ fontWeight: 700, color: 'var(--gray-700)' }}>
-                      {log.amount_paid != null ? `${Number(log.amount_paid).toLocaleString('ko-KR')}원` : '—'}
-                    </span>
-                  </div>
-                  {(log.change_type === 'NEW' || log.change_type === 'RENEW' || log.change_type === 'UPGRADE') && (cancelingUid === log.merchant_uid ? (
+                  {eventType === 'CANCELLED' && log.cancel_reason && (
+                    <div style={{ marginTop: 4, fontSize: 11, color: 'var(--gray-400)' }}>
+                      취소 사유: {log.cancel_reason}
+                    </div>
+                  )}
+                  {eventType === 'PAID' && log.status === 'PAID' && (log.change_type === 'NEW' || log.change_type === 'RENEW' || log.change_type === 'UPGRADE') && (cancelingUid === log.merchant_uid ? (
                     <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 6 }}>
                       <input
                         type="text"
@@ -1073,7 +1103,7 @@ function DetailPanel({ row, onClose, onRefresh }) {
             : (
               <div style={{ background: 'var(--red-100)', borderRadius: 10, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <p style={{ fontSize: 13, color: 'var(--red-500)', fontWeight: 600, margin: 0 }}>
-                  정말 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.
+                  정말 삭제하시겠습니까? 상태가 "삭제됨"으로 변경되며, 목록에는 계속 표시됩니다(상태를 다시 바꾸면 복구 가능).
                 </p>
                 <div style={{ display: 'flex', gap: 8 }}>
                   <button onClick={deleteLicense} style={{ ...styles.btnPrimary, background: 'var(--red-500)', flex: 1 }}>삭제 확인</button>
