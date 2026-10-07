@@ -64,6 +64,11 @@ const t = {
     overflowX: 'auto', display: 'block',
   },
   ok: { fontSize: 11.5, color: '#16A34A', marginTop: 3 },
+  infoBox: {
+    marginBottom: 24, padding: '12px 16px',
+    background: '#F8FAFC', border: '1px solid #E2E8F0',
+    borderRadius: 8, fontSize: 12, color: '#475569', lineHeight: 1.7,
+  },
 }
 
 function Who({ type }) {
@@ -160,7 +165,7 @@ const SECTIONS = [
         timing: '매년 4월', who: 'user', item: '직원별 건강·고용보험 보수월액 업데이트',
         detail: '건강보험공단에서 전년도 보수총액 기준 보수월액 재산정 통보 → 직원별 업데이트 필요.\n조회: 사회보험통합징수포털(si4n.nhis.or.kr) → 고지내역조회 → 보험료산출내역조회 → 산출내역(개인별)',
         path: '채용정보 → 4대보험 탭 → 건강보험·고용보험 보수월액',
-        src: 'employees.health_ins_amount / employ_ins_amount',
+        src: 'welfare_insurance.health_base_amount / employ_base_amount (emp_id+apply_date별 이력 관리, employees 테이블 컬럼 아님 — 2026-08 4대보험 이력관리 재설계로 이관됨)',
       },
       {
         timing: '매년 4월', who: 'user', item: '건강·고용보험 연간 정산 처리',
@@ -183,7 +188,7 @@ const SECTIONS = [
         timing: '매년 7월', who: 'user', item: '직원별 국민연금 기준소득월액 업데이트',
         detail: '국민연금EDI서비스에서 결정된 직원별 기준소득월액 확인 후 채용정보 → 4대보험 탭 업데이트.\n조회: 국민연금EDI서비스 → 결정내역 → 국민연금보험료 결정내역 → 가입자내역(탭)',
         path: '채용정보 → 4대보험 탭 → 국민연금 기준소득월액',
-        src: 'employees.pension_amount',
+        src: 'welfare_insurance.pension_base_amount (emp_id+apply_date별 이력 관리, employees 테이블 컬럼 아님 — 2026-08 4대보험 이력관리 재설계로 이관됨)',
       },
     ],
   },
@@ -212,40 +217,42 @@ const SECTIONS = [
     rows: [
       {
         timing: '소득세법 시행규칙', who: 'dev', item: '간이세액표 고소득 구간 초과세율',
-        detail: '10,000,000원 초과 구간은 income_tax_excess_rate 테이블에서 동적 조회 (Admin Portal Seed 편집기에서 수정, 소스 수정 불필요). DB 미연결 시 fallback 전용 상수만 소스코드 수정 필요.',
-        src: 'income_tax_excess_rate 테이블 (주) / src/lib/salary/taxDeduction.js:94-98 (fallback)',
+        detail: '10,000,000원 초과 구간은 income_tax_excess_rate 테이블에서 동적 조회 (Admin Portal Seed 편집기에서 수정, 소스 수정 불필요). DB 미연결 시에만 쓰이는 fallback 상수는 이름 있는 단일 상수(DEFAULT_RATES)가 아니라 함수별 기본 파라미터로 분산돼 있어, 법 개정 시 아래 각 위치를 개별 확인해야 함.',
+        warn: '단일 상수 없음 — calcNationalPension/calcHealthInsurance/calcCareInsurance/calcEmployInsurance 등 함수별 기본값 + INCOME_TAX_TABLE_1 배열을 각각 확인·수정',
+        src: 'income_tax_excess_rate 테이블 (주, 79-86행에서 조회) / src/lib/salary/taxDeduction.js:21-45(INCOME_TAX_TABLE_1), 122-129(calcHighIncomeTax BASE_TAX), 163-203(4대보험 기본 파라미터)',
       },
       {
         timing: '소득세법 제48조', who: 'dev', item: '퇴직소득세 공제·세율 구조',
-        detail: '근속연수공제, 환산급여공제, 기본세율 구조.\n법령 개정 시 소스코드 직접 수정 필요.',
-        src: 'src/lib/payroll/retireCalc.js:340-373',
+        detail: '근속연수공제(INCOME_DEDUCTION), 환산급여공제(CONVERTED_DEDUCTION), 기본세율(BASIC_RATE) 구조 — 전부 calcRetireTaxPure() 내부의 DB 미연결 시 fallback 계단식 배열.\n법령 개정 시 소스코드 직접 수정 필요.',
+        src: 'src/lib/payroll/retireCalc.js:390-452 (calcRetireTaxPure)',
       },
       {
         timing: '소득세법 시행령', who: 'dev', item: '식대·교통비 비과세 한도',
-        detail: '200,000원/월 이 3곳에 중복 하드코딩. 법 개정 시 3곳 모두 수정 필요.',
-        warn: '3곳 동시 수정 필요 (payrollCalc.js, ipc/index.js, EmpSalary.jsx)',
-        src: 'src/lib/salary/payrollCalc.js:15-18 / src/ipc/index.js:6112 / src/components/pages/EmpSalary.jsx:382',
+        detail: '200,000원/월 이 2개 파일 6곳에 중복 하드코딩. 법 개정 시 전부 수정 필요(IPC 핸들러 리팩토링으로 위치가 재배치됨, 2026-09 기준).',
+        warn: '6곳 동시 수정 필요 — payrollCalc.js 2곳 + ipc/handlers/payroll.js 4곳',
+        src: 'src/lib/salary/payrollCalc.js:27,44 / src/ipc/handlers/payroll.js:185,1206,1571,1604',
       },
       {
         timing: '근로기준법 제60조', who: 'dev', item: '법정 연차 발생 기준',
         detail: '1년 미만: 월 1일 / 1년 이상: 기본 15일 / 2년마다 +1일 / 상한 25일',
-        src: 'src/lib/leave/annualLeaveCalc.js:39-43',
+        src: 'src/lib/leave/annualLeaveCalc.js:65-70 (calcGrantDays)',
       },
       {
         timing: '근로기준법', who: 'dev', item: '월 소정근로시간 209시간',
-        detail: '통상시급, 환산월급 계산의 기준. 주40h 기준 (40+8)×365/12/7 = 209',
-        src: 'src/lib/salary/baseCalc.js:8',
+        detail: '통상시급, 환산월급 계산의 기준. 주40h 기준 (40+8)×365/12/7 = 209. 이름 있는 단일 상수 파일이 없고 여러 파일에 매직넘버로 중복돼 있었으나, 2026-09-21부터 Admin Portal Seed 편집기 [최저임금] 탭의 "소정근로시간" 컬럼으로 연도별 관리하도록 전환 — 사용자 앱도 하드코딩 대신 이 값을 DB(system_config)에서 조회하도록 변경됨.',
+        ok: 'DB 연결 시 seed 동기화된 값 사용, 미연결 시에만 209 fallback — 아래 각 파일의 fallback 상수만 법 개정 시 확인',
+        src: 'Admin Portal → Seed 편집기 → 최저임금 (standard_monthly_hours 컬럼) / 사용자 앱: src/lib/salary/ordinaryWage.js, contractAllowanceConvert.js, ordinaryRecalc.js, src/lib/payroll/retireCalc.js (fallback 상수만)',
       },
       {
         timing: '퇴직급여법 제8조', who: 'dev', item: '법정퇴직금 계산식',
         detail: '평균임금 × 30 × 근속일수 / 365',
-        src: 'src/lib/payroll/retireCalc.js:300-301',
+        src: 'src/lib/payroll/retireCalc.js:317-319 (calcSeverance)',
       },
       {
         timing: '고용보험법 시행령', who: 'dev', item: '출산·육아 고용보험 지원기준',
         detail: '신규 연도 데이터를 Admin Portal Seed 편집기 → [출산육아] 탭 또는 gov_leave_benefit_rates 테이블에 패치 SQL로 추가.',
         values: '출산휴가 EI 상한: 2,200,000원 (2026년)\n배우자출산휴가: 20일, 상한 1,684,210원 (2026년)\n육아휴직: 6개월 이내 2,500,000원, 7개월~ 1,600,000원',
-        src: 'gov_leave_benefit_rates 테이블 / src/db/patches/v1.53.0.sql:21',
+        src: 'gov_leave_benefit_rates 테이블(CREATE TABLE은 6행, 시드 INSERT는 21행) / src/db/patches/v1.53.0.sql',
       },
     ],
   },
@@ -255,12 +262,22 @@ export default function ChecklistPage() {
   return (
     <div>
       <div style={t.h1}>연간 정기 관리 항목</div>
-      <div style={t.sub}>개발사(운영자)와 고객(사용자)이 매년 또는 법령 개정 시 수행해야 하는 항목 목록 (2026.07 기준)</div>
+      <div style={t.sub}>개발사(운영자)와 고객(사용자)이 매년 또는 법령 개정 시 수행해야 하는 항목 목록 (2026.09 기준)</div>
 
       <div style={t.legend}>
         <span style={t.badge(DEV_BG, DEV_COLOR)}>🛠 개발사 (운영자)</span>
         <span style={t.badge(USR_BG, USR_COLOR)}>👤 고객 (사용자)</span>
         <span style={t.badge(WARN_BG, WARN_COLOR)}>⚠ 소스코드 수정 필요</span>
+      </div>
+
+      <div style={t.infoBox}>
+        <b>ℹ️ "Seed 편집기"의 실제 동작 구조</b> — 아래 표에서 "Admin Portal Seed 편집기"로 안내하는
+        항목(4대보험요율/최저임금/근로소득세액표/공휴일/출산육아 등)은 Seed 편집기가 <b>사용자 앱(smart-hr-plus)의
+        로컬 DB를 직접 수정하는 게 아니라, 별도의 Supabase 시드 테이블</b>(insurance_rates/minimum_wage/
+        income_tax_table 등, smart-hr-plus 로컬 DB와 동일한 이름이지만 별개의 원본 테이블)을 수정합니다.
+        사용자 앱이 로그인 시 <code>seedSync.js</code>로 이 원본을 조회해 로컬 DB에 동기화해 오는 구조이므로,
+        Seed 편집기에서 값을 고쳐도 <b>고객이 다시 로그인(또는 동기화)하기 전까지는 로컬에 반영되지 않습니다</b> —
+        긴급 반영이 필요하면 별도로 안내가 필요합니다.
       </div>
 
       {SECTIONS.map((sec, i) => (

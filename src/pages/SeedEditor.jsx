@@ -92,7 +92,7 @@ const CODE_GROUPS = [
   // attOptionalNames: 지급방식(정액/출근일기준)을 개별 급여정보 등록 시 사용자가 선택하는 수당.
   // 통상임금 포함여부가 그 선택에 따라 동적으로 결정되므로, 이 seed 화면에서 ordinary_yn을
   // 고정값으로 저장하면 안 됨(항상 'Y' 유지 — 실제 포함여부는 스마트HR+에서 att_based_yn으로 판정).
-  { code: 'ALLOWANCE',     label: '수당구분',       hasTaxable: true,  hasOrdinary: true, hasSettle: true, attOptionalNames: ['식대', '교통비'] },
+  { code: 'ALLOWANCE',     label: '수당구분',       hasTaxable: true,  hasOrdinary: true, hasAvgWage: true, hasSettle: true, attOptionalNames: ['식대', '교통비'] },
   { code: 'BONUS_TYPE',    label: '상여금구분',     hasTaxable: false, hasOrdinary: false },
   { code: 'LEAVE_TYPE',    label: '휴가구분',       hasTaxable: true,  taxableLabel: '유급여부', hasOrdinary: false },
   { code: 'OUTING_TYPE',   label: '외출/조퇴구분',  hasTaxable: true,  taxableLabel: '유급여부', hasOrdinary: false },
@@ -204,6 +204,7 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
       ...r,
       taxable_yn:        r.taxable_yn        ?? 'N',
       ordinary_yn:       r.ordinary_yn       ?? 'Y',
+      avg_wage_yn:       r.avg_wage_yn       ?? 'Y',
       is_system_default: r.is_system_default ?? 0,
       is_settle_code:    r.is_settle_code    ?? 0,
     })))
@@ -223,7 +224,7 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
     const maxOrder = items.length ? Math.max(...items.map(it => it.sort_order || 0)) + 10 : 10
     setItems(prev => [...prev, {
       id: null, group_code: groupCode, code: '', name: '',
-      taxable_yn: 'N', ordinary_yn: 'Y', is_system_default: 0, is_settle_code: 0,
+      taxable_yn: 'N', ordinary_yn: 'Y', avg_wage_yn: 'Y', is_system_default: 0, is_settle_code: 0,
       sort_order: maxOrder, use_yn: 'Y', _dirty: true,
     }])
     setDirty(true)
@@ -306,6 +307,9 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
           use_yn:            it.use_yn,
           taxable_yn:        it.taxable_yn,
           ordinary_yn:       isAttOptional ? 'Y' : it.ordinary_yn,
+          // 평균임금은 통상임금과 달리 식대/교통비(attOptionalNames)에도 예외를 두지 않는다
+          // (2026-10-01 결정 — 지급방식에 따라 동적 결정되는 통상임금과 법적 성격이 다름).
+          avg_wage_yn:       it.avg_wage_yn,
           is_system_default: it.is_system_default || 0,
           is_settle_code:    it.is_settle_code    || 0,
           description:       (it.description || '').trim() || null,
@@ -421,6 +425,9 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
                   {grp?.hasOrdinary && (
                     <th style={{ ...s.th, width: 120, textAlign: 'center' }}>통상임금여부</th>
                   )}
+                  {grp?.hasAvgWage && (
+                    <th style={{ ...s.th, width: 90, textAlign: 'center' }}>평균임금여부</th>
+                  )}
                   {grp?.hasSettle && (
                     <th style={{ ...s.th, width: 80, textAlign: 'center' }}>정산코드</th>
                   )}
@@ -506,6 +513,15 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
                               <input type="checkbox" checked={isOrd}
                                 onChange={e => change(idx, 'ordinary_yn', e.target.checked ? 'Y' : 'N')} />
                             )}
+                          </td>
+                        )
+                      })()}
+                      {grp?.hasAvgWage && (() => {
+                        const isAvgWage = (it.avg_wage_yn ?? 'Y') === 'Y'
+                        return (
+                          <td style={{ ...s.td, textAlign: 'center' }}>
+                            <input type="checkbox" checked={isAvgWage}
+                              onChange={e => change(idx, 'avg_wage_yn', e.target.checked ? 'Y' : 'N')} />
                           </td>
                         )
                       })()}
@@ -785,7 +801,7 @@ function MinimumWageTab({ onDirtyChange }) {
   const handleAdd = () => {
     setItems(prev => [...prev, {
       id: null, effective_from: `${new Date().getFullYear() + 1}-01-01`,
-      amount: 0, memo: '', _dirty: true,
+      amount: 0, standard_monthly_hours: 209, memo: '', _dirty: true,
     }])
     setDirty(true)
   }
@@ -859,6 +875,7 @@ function MinimumWageTab({ onDirtyChange }) {
               <tr>
                 <th style={{ ...s.th, width: 140 }}>적용시작일</th>
                 <th style={{ ...s.th, width: 140, textAlign: 'right' }}>시급(원)</th>
+                <th style={{ ...s.th, width: 120, textAlign: 'right' }}>소정근로시간</th>
                 <th style={s.th}>비고</th>
                 <th style={{ ...s.th, width: 64, textAlign: 'center' }}>삭제</th>
               </tr>
@@ -875,6 +892,11 @@ function MinimumWageTab({ onDirtyChange }) {
                       type="text" inputMode="numeric" value={fmtMoney(it.amount)}
                       onChange={e => change(idx, 'amount', parseMoney(e.target.value))} />
                   </td>
+                  <td style={{ ...s.td, textAlign: 'right' }}>
+                    <input style={{ ...s.input, textAlign: 'right' }}
+                      type="text" inputMode="numeric" value={it.standard_monthly_hours ?? 209}
+                      onChange={e => change(idx, 'standard_monthly_hours', parseInt(e.target.value.replace(/\D/g, ''), 10) || 0)} />
+                  </td>
                   <td style={s.td}>
                     <input style={s.input} value={it.memo || ''}
                       onChange={e => change(idx, 'memo', e.target.value)}
@@ -886,7 +908,7 @@ function MinimumWageTab({ onDirtyChange }) {
                 </tr>
               ))}
               {items.length === 0 && (
-                <tr><td colSpan={4} style={s.empty}>등록된 최저임금이 없습니다.</td></tr>
+                <tr><td colSpan={5} style={s.empty}>등록된 최저임금이 없습니다.</td></tr>
               )}
             </tbody>
           </table>
@@ -1639,6 +1661,7 @@ function parseWorkbook(wb) {
         is_system_default: r[ci('시스템기본')] === 'Y' ? 1 : 0,
         taxable_yn: ci('과세여부') >= 0 ? (r[ci('과세여부')] || 'N') : 'N',
         ordinary_yn: ci('통상임금포함') >= 0 ? (r[ci('통상임금포함')] || 'Y') : 'Y',
+        avg_wage_yn: ci('평균임금포함') >= 0 ? (r[ci('평균임금포함')] || 'Y') : 'Y',
         // 정산전용/설명/사용처/유사어/메모 — 예전(이 컬럼 추가 이전) 양식으로 업로드해도 깨지지
         // 않도록 컬럼이 없으면 안전한 기본값으로 둔다(정산전용=N, 나머지는 빈 값).
         is_settle_code:  ci('정산전용') >= 0 ? (r[ci('정산전용')] === 'Y' ? 1 : 0) : 0,
@@ -1802,17 +1825,19 @@ function BulkUploadModal({ onClose }) {
       const codeBase = ['코드', '코드명', '순서', '사용여부', '시스템기본']
       const codeTax  = [...codeBase, '과세여부']
       const codeOrd  = [...codeTax,  '통상임금포함']
+      const codeAvg  = [...codeOrd,  '평균임금포함']
       const codeExtra = ['정산전용', '설명', '사용처', '유사어', '메모']
       const allCodes = await fetchAllRows('seed_codes_smart_hr_plus')
       for (const grp of CODE_GROUPS) {
         const rows = allCodes
           .filter(r => r.group_code === grp.code)
           .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
-        const headers = [...(grp.hasOrdinary ? codeOrd : grp.hasTaxable ? codeTax : codeBase), ...codeExtra]
+        const headers = [...(grp.hasAvgWage ? codeAvg : grp.hasOrdinary ? codeOrd : grp.hasTaxable ? codeTax : codeBase), ...codeExtra]
         const dataRows = rows.map(r => {
           const row = [r.code, r.name, r.sort_order ?? 0, r.use_yn || 'Y', r.is_system_default ? 'Y' : 'N']
           if (grp.hasTaxable)  row.push(r.taxable_yn || 'N')
           if (grp.hasOrdinary) row.push(r.ordinary_yn || 'Y')
+          if (grp.hasAvgWage)  row.push(r.avg_wage_yn || 'Y')
           row.push(r.is_settle_code ? 'Y' : 'N', r.description || '', r.usage_location || '', r.synonyms || '', r.memo || '')
           return row
         })
