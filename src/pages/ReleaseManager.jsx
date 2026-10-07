@@ -153,7 +153,7 @@ export default function ReleaseManager() {
           <table style={s.table}>
             <thead>
               <tr>
-                {['버전','제품','파일명','GitHub','노트','VirusTotal','등록일','상태','액션'].map(h => (
+                {['버전','제품','파일명','GitHub','노트','VirusTotal','등록일시','상태','액션'].map(h => (
                   <th key={h} style={s.th}>{h}</th>
                 ))}
               </tr>
@@ -175,7 +175,7 @@ export default function ReleaseManager() {
                       ? <a href={rel.virustotal_url} target="_blank" rel="noreferrer" style={s.vtLink}>결과 보기</a>
                       : <span style={{ color: '#94A3B8' }}>-</span>}
                   </td>
-                  <td style={s.td}>{rel.created_at?.slice(0, 10)}</td>
+                  <td style={s.td}>{rel.created_at && new Date(rel.created_at).toLocaleString('ko-KR')}</td>
                   <td style={s.td}>
                     <span style={{ ...s.badge, background: rel.is_active ? '#16A34A' : '#475569' }}>
                       {rel.is_active ? '활성' : '비활성'}
