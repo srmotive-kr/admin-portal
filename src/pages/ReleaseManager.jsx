@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useProduct } from '../lib/ProductContext'
 
-const BUCKET = 'releases'
+const SUPABASE_URL = 'https://nwrcbcoqcsactnskdotc.supabase.co'
 
 export default function ReleaseManager() {
   const { products, productCode } = useProduct()
@@ -32,29 +32,37 @@ export default function ReleaseManager() {
     setError(''); setSuccess(''); setUploading(true)
 
     try {
-      const ext      = file.name.split('.').pop()
-      const filePath = `${form.product_code}/${form.version}/${file.name}`
-
       // 자동 업데이트 클라이언트가 다운로드 후 무결성을 검증할 수 있도록 SHA-256/파일크기를
       // 업로드 시점에 미리 계산해둔다(자동업데이트_도입방안.md §4.2, 2026-08-12).
       const fileBuffer  = await file.arrayBuffer()
       const digest      = await crypto.subtle.digest('SHA-256', fileBuffer)
       const sha256      = Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('')
 
-      const { error: upErr } = await supabase.storage.from(BUCKET).upload(filePath, file, { upsert: true })
-      if (upErr) throw new Error(upErr.message)
-
-      const { error: dbErr } = await supabase.from('releases').insert({
+      // 설치파일은 Supabase Storage가 아니라 GitHub Releases(비공개 저장소)로 보낸다 — Storage
+      // 전역 업로드 한도가 Free 플랜 50MB 고정이라 100MB대 설치파일을 올릴 수 없었음(2026-10-07
+      // 전환). upload-github-release 함수가 이 요청 바디를 그대로 GitHub에 스트리밍 전달하고
+      // releases 테이블까지 함께 갱신한다 — 토큰은 그 함수 안에서만 쓰여 브라우저엔 노출되지 않음.
+      const { data: { session } } = await supabase.auth.getSession()
+      const params = new URLSearchParams({
         product_code: form.product_code,
-        version:        form.version.trim(),
-        file_path:      filePath,
-        is_active:      false,
-        notes:          form.notes.trim() || null,
-        virustotal_url: form.virustotal_url.trim() || null,
+        version: form.version.trim(),
+        filename: file.name,
         sha256,
-        file_size:      file.size,
+        file_size: String(file.size),
+        ...(form.notes.trim() ? { notes: form.notes.trim() } : {}),
+        ...(form.virustotal_url.trim() ? { virustotal_url: form.virustotal_url.trim() } : {}),
       })
-      if (dbErr) throw new Error(dbErr.message)
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/upload-github-release?${params}`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${session?.access_token || ''}`,
+          'Content-Type': 'application/octet-stream',
+        },
+        body: file,
+        duplex: 'half',
+      })
+      const result = await res.json()
+      if (!res.ok || result.error) throw new Error(result.error || '업로드 실패')
 
       setSuccess(`v${form.version} 업로드 완료!`)
       setForm(f => ({ ...f, version: '', notes: '', virustotal_url: '' }))
@@ -77,8 +85,10 @@ export default function ReleaseManager() {
   }
 
   async function handleDelete(rel) {
-    if (!window.confirm(`v${rel.version} 을(를) 삭제하시겠습니까?\n스토리지 파일도 함께 삭제됩니다.`)) return
-    await supabase.storage.from(BUCKET).remove([rel.file_path])
+    // 설치파일 자체는 GitHub Releases에 있어 여기서는 지우지 않는다(삭제 자동화는 별도 작업으로
+    // 미룸) — DB 레코드만 삭제되므로 목록/다운로드 연결만 끊어지고, 실제 파일은 GitHub
+    // srmotive-kr/smart-hr-plus-releases 저장소에서 운영자가 직접 정리해야 한다.
+    if (!window.confirm(`v${rel.version} 을(를) 삭제하시겠습니까?\n(GitHub Releases의 실제 파일은 지워지지 않습니다 — 저장소에서 직접 삭제하세요)`)) return
     await supabase.from('releases').delete().eq('id', rel.id)
     fetchReleases()
   }
@@ -143,7 +153,7 @@ export default function ReleaseManager() {
           <table style={s.table}>
             <thead>
               <tr>
-                {['버전','제품','파일 경로','노트','VirusTotal','등록일','상태','액션'].map(h => (
+                {['버전','제품','파일명','GitHub','노트','VirusTotal','등록일','상태','액션'].map(h => (
                   <th key={h} style={s.th}>{h}</th>
                 ))}
               </tr>
@@ -153,7 +163,12 @@ export default function ReleaseManager() {
                 <tr key={rel.id} style={s.tr}>
                   <td style={s.td}><strong>v{rel.version}</strong></td>
                   <td style={s.td}><span style={s.code}>{rel.product_code}</span></td>
-                  <td style={{ ...s.td, fontSize: 11, color: '#94A3B8', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{rel.file_path}</td>
+                  <td style={{ ...s.td, fontSize: 11, color: '#94A3B8', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{rel.file_path || '-'}</td>
+                  <td style={s.td}>
+                    {rel.github_repo && rel.github_release_tag
+                      ? <a href={`https://github.com/${rel.github_repo}/releases/tag/${rel.github_release_tag}`} target="_blank" rel="noreferrer" style={s.vtLink}>저장소 보기</a>
+                      : <span style={{ color: '#94A3B8' }}>-</span>}
+                  </td>
                   <td style={s.td}>{rel.notes || '-'}</td>
                   <td style={s.td}>
                     {rel.virustotal_url
