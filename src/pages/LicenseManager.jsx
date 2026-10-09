@@ -643,8 +643,11 @@ function DetailPanel({ row, onClose, onRefresh }) {
 
   async function releaseHwId(hwid) {
     const next = hwIds.filter(h => h !== hwid)
+    const nextLabels = { ...(row.hw_id_labels || {}) }
+    delete nextLabels[hwid]
     const { error } = await supabase.from('licenses').update({
       hw_ids: next,
+      hw_id_labels: nextLabels,
       updated_at: new Date().toISOString(),
     }).eq('license_key', row.license_key)
     if (!error) { setHwIds(next); onRefresh() }
@@ -653,6 +656,7 @@ function DetailPanel({ row, onClose, onRefresh }) {
   async function resetHwIds() {
     const { error } = await supabase.from('licenses').update({
       hw_ids: [],
+      hw_id_labels: {},
       updated_at: new Date().toISOString(),
     }).eq('license_key', row.license_key)
     if (!error) { setHwIds([]); onRefresh() }
@@ -891,17 +895,36 @@ function DetailPanel({ row, onClose, onRefresh }) {
           </div>
           {hwIds.length === 0
             ? <p style={{ fontSize: 12, color: 'var(--gray-400)', margin: 0 }}>설치된 PC 없음</p>
-            : hwIds.map(hwid => (
-              <div key={hwid} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'var(--gray-50)', borderRadius: 8, padding: '7px 12px', marginBottom: 6 }}>
-                <code style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--gray-600)', wordBreak: 'break-all' }}>{hwid}</code>
-                <button
-                  onClick={() => releaseHwId(hwid)}
-                  style={{ ...styles.btnSm, fontSize: 11, padding: '2px 8px', marginLeft: 8, flexShrink: 0 }}
-                >
-                  해제
-                </button>
+            : (
+              <div style={{ border: '1px solid var(--gray-100)', borderRadius: 8, overflow: 'hidden' }}>
+                <div style={{ display: 'flex', background: 'var(--gray-50)', padding: '6px 12px', fontSize: 10.5, fontWeight: 600, color: 'var(--gray-400)' }}>
+                  <span style={{ flex: 2 }}>PC 이름</span>
+                  <span style={{ flex: 2 }}>등록일</span>
+                  <span style={{ flex: 3 }}>식별자</span>
+                  <span style={{ width: 44 }} />
+                </div>
+                {hwIds.map(hwid => {
+                  const label = row.hw_id_labels?.[hwid]
+                  return (
+                    <div key={hwid} style={{ display: 'flex', alignItems: 'center', padding: '7px 12px', borderTop: '1px solid var(--gray-100)' }}>
+                      <span style={{ flex: 2, fontSize: 12, fontWeight: 600, color: 'var(--gray-700)' }}>
+                        {label?.hostname || <span style={{ color: 'var(--gray-600)', fontWeight: 400 }}>(알 수 없음)</span>}
+                      </span>
+                      <span style={{ flex: 2, fontSize: 11, color: 'var(--gray-600)' }}>
+                        {label?.registeredAt ? new Date(label.registeredAt).toLocaleDateString('ko-KR') : '—'}
+                      </span>
+                      <code style={{ flex: 3, fontFamily: 'monospace', fontSize: 10, color: 'var(--gray-600)', wordBreak: 'break-all' }}>{hwid}</code>
+                      <button
+                        onClick={() => releaseHwId(hwid)}
+                        style={{ ...styles.btnSm, width: 44, fontSize: 11, padding: '2px 8px', flexShrink: 0 }}
+                      >
+                        해제
+                      </button>
+                    </div>
+                  )
+                })}
               </div>
-            ))
+            )
           }
 
           <hr style={styles.hr} />
