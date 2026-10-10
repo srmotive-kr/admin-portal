@@ -474,6 +474,7 @@ function DetailPanel({ row, onClose, onRefresh }) {
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [emailMsg, setEmailMsg] = useState('')
   const [emailErr, setEmailErr] = useState('')
+  const [emailSending, setEmailSending] = useState(false)
   const [unlockCode, setUnlockCode] = useState('')
   const [unlockLoading, setUnlockLoading] = useState(false)
   const [unlockErr, setUnlockErr] = useState('')
@@ -611,11 +612,16 @@ function DetailPanel({ row, onClose, onRefresh }) {
   async function resendEmail() {
     setEmailMsg(''); setEmailErr('')
     if (!form.email) { setEmailErr('이메일을 먼저 입력하고 저장하세요.'); return }
-    const { error } = await supabase.functions.invoke('send-license-email', {
-      body: { license_key: row.license_key, email: form.email, grade: form.grade, product_code: row.product_code },
-    })
-    if (error) setEmailErr(`발송 실패: ${error.message}`)
-    else setEmailMsg('이메일 발송됨')
+    setEmailSending(true)
+    try {
+      const { error } = await supabase.functions.invoke('send-license-email', {
+        body: { license_key: row.license_key, email: form.email, grade: form.grade, product_code: row.product_code },
+      })
+      if (error) setEmailErr(`발송 실패: ${error.message}`)
+      else setEmailMsg('이메일 발송됨')
+    } finally {
+      setEmailSending(false)
+    }
   }
 
   async function sendExpiryReminder() {
@@ -624,21 +630,26 @@ function DetailPanel({ row, onClose, onRefresh }) {
     if (!row.expires_at) { setEmailErr('만료일이 없는 라이선스입니다.'); return }
     const days_left = dDayFor(row.expires_at)
     if (days_left < 0) { setEmailErr('이미 만료된 라이선스입니다 — 만료 안내 발송은 만료 전에만 사용할 수 있습니다.'); return }
-    const { error } = await supabase.functions.invoke('send-license-email', {
-      body: {
-        license_key: row.license_key, email: form.email, grade: form.grade,
-        type: 'expiry_reminder', days_left, expires_at: row.expires_at.slice(0, 10),
-        product_code: row.product_code,
-      },
-    })
-    if (error) { setEmailErr(`발송 실패: ${error.message}`); return }
-    const notified = row.expiry_notified_days || []
-    await supabase.from('licenses').update({
-      expiry_notified_days: [...notified, days_left],
-      updated_at: new Date().toISOString(),
-    }).eq('license_key', row.license_key)
-    setEmailMsg('만료 안내 이메일 발송됨')
-    onRefresh()
+    setEmailSending(true)
+    try {
+      const { error } = await supabase.functions.invoke('send-license-email', {
+        body: {
+          license_key: row.license_key, email: form.email, grade: form.grade,
+          type: 'expiry_reminder', days_left, expires_at: row.expires_at.slice(0, 10),
+          product_code: row.product_code,
+        },
+      })
+      if (error) { setEmailErr(`발송 실패: ${error.message}`); return }
+      const notified = row.expiry_notified_days || []
+      await supabase.from('licenses').update({
+        expiry_notified_days: [...notified, days_left],
+        updated_at: new Date().toISOString(),
+      }).eq('license_key', row.license_key)
+      setEmailMsg('만료 안내 이메일 발송됨')
+      onRefresh()
+    } finally {
+      setEmailSending(false)
+    }
   }
 
   async function releaseHwId(hwid) {
@@ -809,11 +820,13 @@ function DetailPanel({ row, onClose, onRefresh }) {
               style={{ ...styles.input, flex: 1 }}
             />
             <button onClick={saveEmail} style={{ ...styles.btnSmPrimary, whiteSpace: 'nowrap' }}>이메일저장</button>
-            <button onClick={resendEmail} style={{ ...styles.btnSm, whiteSpace: 'nowrap' }}>재발송</button>
+            <button onClick={resendEmail} disabled={emailSending} style={{ ...styles.btnSm, whiteSpace: 'nowrap' }}>
+              {emailSending ? '발송 중...' : '재발송'}
+            </button>
           </div>
           {row.expires_at && dDayFor(row.expires_at) >= 0 && (
-            <button onClick={sendExpiryReminder} style={{ ...styles.btnSm, alignSelf: 'flex-start' }}>
-              📧 만료 안내 발송 (D-{dDayFor(row.expires_at)})
+            <button onClick={sendExpiryReminder} disabled={emailSending} style={{ ...styles.btnSm, alignSelf: 'flex-start' }}>
+              {emailSending ? '발송 중...' : `📧 만료 안내 발송 (D-${dDayFor(row.expires_at)})`}
             </button>
           )}
           {row.expires_at && dDayFor(row.expires_at) < 0 && (
