@@ -96,6 +96,10 @@ const CODE_GROUPS = [
   { code: 'BONUS_TYPE',    label: '상여금구분',     hasTaxable: false, hasOrdinary: false },
   { code: 'LEAVE_TYPE',    label: '휴가구분',       hasTaxable: true,  taxableLabel: '유급여부', hasOrdinary: false },
   { code: 'OUTING_TYPE',   label: '외출/조퇴구분',  hasTaxable: true,  taxableLabel: '유급여부', hasOrdinary: false },
+  // BREAK_TYPE(휴게시간, 2026-10-21 추가) — 사용자앱 CodeManager.jsx엔 있었는데 여기(어드민포탈
+  // seed 편집기)엔 그룹 자체가 없어, seed_codes_smart_hr_plus를 통한 신규 코드 배포 경로가
+  // 빠져 있었다. 사용자앱도 퇴직사유보다 위로 탭 순서를 맞춤.
+  { code: 'BREAK_TYPE',    label: '휴게시간',       hasTaxable: true,  taxableLabel: '유급여부', hasOrdinary: false },
   { code: 'RESIGN_REASON', label: '퇴직사유',       hasTaxable: false, hasOrdinary: false },
   { code: 'SEVERANCE_TYPE',label: '퇴직급여유형',    hasTaxable: false, hasOrdinary: false },
 ]
@@ -413,10 +417,10 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
                 <tr>
                   <th style={{ ...s.th, width: 48, textAlign: 'center' }}>순서</th>
                   <th style={{ ...s.th, width: 100 }}>코드</th>
-                  <th style={s.th}>코드명</th>
-                  <th style={{ ...s.th, width: 170 }}>설명</th>
+                  <th style={{ ...s.th, width: 110 }}>코드명</th>
+                  <th style={{ ...s.th, width: 260 }}>설명</th>
                   <th style={{ ...s.th, width: 170 }}>사용처</th>
-                  <th style={{ ...s.th, width: 140 }}>유사어</th>
+                  <th style={{ ...s.th, width: 220 }}>유사어</th>
                   {grp?.hasTaxable && (
                     <th style={{ ...s.th, width: 80, textAlign: 'center' }}>
                       {grp.taxableLabel || '과세여부'}
@@ -464,31 +468,23 @@ function CodeTab({ groupCode, onGroupChange, onDirtyChange }) {
                           placeholder="코드명 입력" />
                       </td>
                       <td style={s.td}>
-                        {(it.id === null && isSys) ? (
-                          <input style={s.input} value={it.description || ''}
-                            onChange={e => change(idx, 'description', e.target.value)}
-                            placeholder="이 코드의 용도 (필수)" />
-                        ) : (
-                          <span style={{ fontSize: 12, color: '#7A88AA' }}>{it.description || '-'}</span>
-                        )}
+                        {/* 설명/사용처/유사어 — 예전엔 "신규행+시스템코드"일 때만 입력 가능했는데
+                            (일반코드/기존 저장행은 읽기전용), 시스템코드 여부와 무관하게 항상
+                            입력·수정 가능하도록 열었다(2026-10-21, 사용자 요청) — 필수 검증은
+                            handleSave의 신규+시스템코드 조건 그대로 유지. */}
+                        <input style={s.input} value={it.description || ''}
+                          onChange={e => change(idx, 'description', e.target.value)}
+                          placeholder="이 코드의 용도 (시스템코드는 필수)" />
                       </td>
                       <td style={s.td}>
-                        {(it.id === null && isSys) ? (
-                          <input style={s.input} value={it.usage_location || ''}
-                            onChange={e => change(idx, 'usage_location', e.target.value)}
-                            placeholder="사용 화면/기능 (필수)" />
-                        ) : (
-                          <span style={{ fontSize: 12, color: '#7A88AA' }}>{it.usage_location || '-'}</span>
-                        )}
+                        <input style={s.input} value={it.usage_location || ''}
+                          onChange={e => change(idx, 'usage_location', e.target.value)}
+                          placeholder="사용 화면/기능 (시스템코드는 필수)" />
                       </td>
                       <td style={s.td}>
-                        {(it.id === null && isSys) ? (
-                          <input style={s.input} value={it.synonyms || ''}
-                            onChange={e => change(idx, 'synonyms', e.target.value)}
-                            placeholder="유사어(쉼표구분, 선택)" />
-                        ) : (
-                          <span style={{ fontSize: 12, color: '#7A88AA' }}>{it.synonyms || '-'}</span>
-                        )}
+                        <input style={s.input} value={it.synonyms || ''}
+                          onChange={e => change(idx, 'synonyms', e.target.value)}
+                          placeholder="유사어(쉼표구분, 선택)" />
                       </td>
                       {grp?.hasTaxable && (() => {
                         const isPaid = it.taxable_yn === 'Y'
