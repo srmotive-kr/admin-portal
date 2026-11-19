@@ -82,7 +82,7 @@ const RATIO_ROLE_OPTIONS = [
   { value: 'loan_stability', label: '부채관리안정성 분자' },
 ]
 
-// ─── 기본값관리 > 은퇴 ─────────────────────────────────────────────────────────
+// ─── 기본값관리 > 생활수준(은퇴) ───────────────────────────────────────────────
 // 실제 화면(RetireDefaultsTable.jsx)은 retire_preset_defaults(14개 필드)와
 // ret_level_defaults(외식/골프/여행 회당비용 3개 필드)를 한 표로 합쳐서 보여준다.
 const RETIRE_TIERS = [
@@ -91,40 +91,205 @@ const RETIRE_TIERS = [
   { key: '3', label: '여유로운생활' },
   { key: '4', label: '풍족한생활' },
 ]
-const RETIRE_ROWS = [
-  { key: 'req_bas_mn_amt',     label: '기초생활비(만원/월)',  table: 'retire', unit: 'money' },
-  { key: 'req_med_mn_amt',     label: '의료비(만원/월)',      table: 'retire', unit: 'money' },
-  // 두 필드를 한 셀에 같이 보여주는 행(2026-08-15 사용자 지시) — 여행/외식/골프는 횟수+
-  // 회당비용("년/월 [ ]회, 회당 [ ]만원"), 연령 2종은 남/여("남 [ ]세, 여 [ ]세").
-  { type: 'pair', label: '여행', fields: [
-    { key: 'req_trvl_yr_cnt', table: 'retire', unit: 'raw', prefix: '년', suffix: '회, 회당' },
-    { key: 'trvl_mn_cnt_xpns', table: 'retlvl', unit: 'money', suffix: '만원' },
-  ]},
-  { type: 'pair', label: '외식', fields: [
-    { key: 'req_dine_mn_cnt', table: 'retire', unit: 'raw', prefix: '월', suffix: '회, 회당' },
-    { key: 'dine_mn_cnt_xpns', table: 'retlvl', unit: 'money', suffix: '만원' },
-  ]},
-  { type: 'pair', label: '골프', fields: [
-    { key: 'req_golf_mn_cnt', table: 'retire', unit: 'raw', prefix: '년', suffix: '회, 회당' },
-    { key: 'golf_mn_cnt_xpns', table: 'retlvl', unit: 'money', suffix: '만원' },
-  ]},
-  { key: 'req_cult_mn_amt',    label: '문화비(만원/월)',      table: 'retire', unit: 'money' },
-  { key: 'req_slv_twn_amt',    label: '실버타운보증금(만원)', table: 'retire', unit: 'money' },
-  { key: 'req_alon_liv_rt',    label: '홀로생존시생활비율(%)', table: 'retire', unit: 'raw' },
-  { key: 'req_med_rcu_trm',    label: '사망전 간병기간(년)',  table: 'retire', unit: 'raw' },
-  { key: 'req_med_rcu_mn_amt', label: '간병비(만원/월)',      table: 'retire', unit: 'money' },
-  { type: 'pair', label: '은퇴예상연령', fields: [
-    { key: 'man_ret_age', table: 'retire', unit: 'raw', prefix: '남', suffix: '세,' },
-    { key: 'fem_ret_age', table: 'retire', unit: 'raw', prefix: '여', suffix: '세' },
-  ]},
-  { type: 'pair', label: '기대수명', fields: [
-    { key: 'man_dth_age', table: 'retire', unit: 'raw', prefix: '남', suffix: '세,' },
-    { key: 'fem_dth_age', table: 'retire', unit: 'raw', prefix: '여', suffix: '세' },
-  ]},
-]
 const RETIRE_TABLES = {
   retire: { name: 'planner_retire_preset_defaults', pk: 'ret_lvl_tp' },
   retlvl: { name: 'planner_ret_level_defaults',      pk: 'ret_lvl_tp' },
+}
+// 2026-11-19 사용자 지시 — "생활수준은 화면 레이아웃을 사용자 앱의 '생활수준별 기본값
+// 관리'의 '시스템값' 영역과 동일하게 구성해줘". 기존엔 일반 TieredFieldsTab(단순 tier×field
+// 표, pair 행은 한 셀에 가로로 입력칸 2개 표시)을 재사용했는데, 사용자 앱 RetireDefaultsTable.jsx
+// 는 여행/외식/골프/은퇴예상연령/기대수명을 세로 2행(rowSpan)으로 나누고 "연간 필요금액
+// 소계" 강조 행까지 있어 레이아웃이 달라 전용 컴포넌트(RetireSystemTable, 아래 정의)로
+// 분리했다. admin-portal은 "시스템값"만 관리하므로(사용자 앱의 "사용자 정의"는 설계사별
+// 로컬 설정이라 여기 대상 아님) 그 화면의 시스템값 열 그룹만 재현한다.
+const RETIRE_SYS_ROWS = [
+  { type: 'plain', key: 'req_bas_mn_amt', label: '기초생활비(만원/월)', table: 'retire', money: true },
+  { type: 'plain', key: 'req_med_mn_amt', label: '의료비(만원/월)', table: 'retire', money: true },
+  { type: 'group', label: '여행', sub: [
+    { key: 'req_trvl_yr_cnt', label: '횟수/년', table: 'retire', money: false },
+    { key: 'trvl_mn_cnt_xpns', label: '만원/회', table: 'retlvl', money: true },
+  ]},
+  { type: 'group', label: '외식', sub: [
+    { key: 'req_dine_mn_cnt', label: '횟수/월', table: 'retire', money: false },
+    { key: 'dine_mn_cnt_xpns', label: '만원/회', table: 'retlvl', money: true },
+  ]},
+  { type: 'group', label: '골프', sub: [
+    { key: 'req_golf_mn_cnt', label: '횟수/년', table: 'retire', money: false },
+    { key: 'golf_mn_cnt_xpns', label: '만원/회', table: 'retlvl', money: true },
+  ]},
+  { type: 'plain', key: 'req_cult_mn_amt', label: '문화비(만원/월)', table: 'retire', money: true },
+  { type: 'computed', label: '연간 필요금액 소계' },
+  { type: 'plain', key: 'req_slv_twn_amt', label: '실버타운보증금(만원)', table: 'retire', money: true },
+  { type: 'plain', key: 'req_alon_liv_rt', label: '홀로생존시생활비율(%)', table: 'retire', money: false },
+  { type: 'plain', key: 'req_med_rcu_trm', label: '사망전 간병기간(년)', table: 'retire', money: false },
+  { type: 'plain', key: 'req_med_rcu_mn_amt', label: '간병비(만원/월)', table: 'retire', money: true },
+  { type: 'group', label: '은퇴예상연령(세)', sub: [
+    { key: 'man_ret_age', label: '남자', table: 'retire', money: false },
+    { key: 'fem_ret_age', label: '여자', table: 'retire', money: false },
+  ]},
+  { type: 'group', label: '기대수명(세)', sub: [
+    { key: 'man_dth_age', label: '남자', table: 'retire', money: false },
+    { key: 'fem_dth_age', label: '여자', table: 'retire', money: false },
+  ]},
+]
+// 사용자 앱 RetireDefaultsTable.jsx의 computeAnnualTotal()과 완전히 동일한 공식 — 두
+// 레포가 같은 소계를 보여줘야 한다(12×(기초생활비+의료비+문화비) + 여행(회당×횟수) +
+// 12×외식(회당×횟수) + 골프(회당×횟수), 골프는 연 단위라 ×12 없음).
+function retireAnnualTotal(get) {
+  const n = (k) => Number(get(k)) || 0
+  return 12 * n('req_bas_mn_amt') + 12 * n('req_med_mn_amt')
+    + n('trvl_mn_cnt_xpns') * n('req_trvl_yr_cnt')
+    + 12 * (n('dine_mn_cnt_xpns') * n('req_dine_mn_cnt'))
+    + n('golf_mn_cnt_xpns') * n('req_golf_mn_cnt')
+    + 12 * n('req_cult_mn_amt')
+}
+
+function RetireSystemTable({ onDirtyChange }) {
+  const [values, setValues]   = useState({})
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving]   = useState(false)
+  const [dirty, setDirty]     = useState(false)
+  const [msg, setMsg]         = useState(null)
+  const savingRef = useRef(false)
+
+  useEffect(() => { onDirtyChange?.(dirty) }, [dirty])
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    const tableEntries = Object.entries(RETIRE_TABLES)
+    const results = await Promise.all(tableEntries.map(([, t]) => supabase.from(t.name).select('*')))
+    const errored = results.find(r => r.error)
+    if (errored) { setMsg({ type: 'error', text: errored.error.message }); setLoading(false); return }
+    const next = {}
+    for (const t of RETIRE_TIERS) next[t.key] = {}
+    tableEntries.forEach(([, t], i) => {
+      for (const row of results[i].data || []) {
+        if (next[row[t.pk]]) Object.assign(next[row[t.pk]], row)
+      }
+    })
+    setValues(next); setDirty(false); setLoading(false)
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const displayVal = (tierKey, key, money) => {
+    const raw = values[tierKey]?.[key]
+    if (raw === undefined || raw === null || raw === '') return ''
+    return money ? Number(raw) / 10000 : raw
+  }
+
+  const change = (tierKey, key, money, inputVal) => {
+    const num = inputVal === '' ? '' : Number(inputVal)
+    const raw = money ? (num === '' ? '' : num * 10000) : num
+    setValues(prev => ({ ...prev, [tierKey]: { ...prev[tierKey], [key]: raw } }))
+    setDirty(true)
+  }
+
+  const handleSave = async () => {
+    if (savingRef.current) return
+    savingRef.current = true
+    try {
+      setSaving(true); setMsg(null)
+      const flatFields = RETIRE_SYS_ROWS.flatMap(r => r.type === 'group' ? r.sub : r.type === 'plain' ? [r] : [])
+      const upserts = []
+      for (const t of RETIRE_TIERS) {
+        const v = values[t.key] || {}
+        for (const [tableKey, tinfo] of Object.entries(RETIRE_TABLES)) {
+          const payload = { [tinfo.pk]: t.key }
+          let any = false
+          for (const f of flatFields.filter(fl => fl.table === tableKey)) {
+            payload[f.key] = Number(v[f.key] || 0)
+            any = true
+          }
+          if (!any) continue
+          upserts.push(supabase.from(tinfo.name).upsert(payload, { onConflict: tinfo.pk }))
+        }
+      }
+      const results = await Promise.all(upserts)
+      const errored = results.find(r => r.error)
+      if (errored) { setMsg({ type: 'error', text: errored.error.message }); return }
+      setMsg({ type: 'success', text: '정상적으로 저장되었습니다.' })
+      touchSyncMeta()
+      load()
+    } catch (e) {
+      setMsg({ type: 'error', text: e?.message || String(e) })
+    } finally {
+      savingRef.current = false
+      setSaving(false)
+    }
+  }
+
+  const sysGetter = (tierKey) => (key) => values[tierKey]?.[key] ?? 0
+
+  return (
+    <div style={s.card}>
+      <div style={s.toolbar}>
+        <span style={s.cnt}>시스템값 {dirty && <span style={{ color: '#DC2626', marginLeft: 8 }}>● 미저장</span>}</span>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button style={s.btn('ghost')} onClick={load} disabled={saving}>↺ 새로고침</button>
+          <button style={s.btn('primary')} onClick={handleSave} disabled={saving || !dirty}>
+            {saving ? '저장 중…' : '💾 저장'}
+          </button>
+        </div>
+      </div>
+      <MsgModal msg={msg} onClose={() => setMsg(null)} />
+      {loading ? <div style={s.empty}>로딩 중…</div> : (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={s.table}>
+            <thead>
+              <tr>
+                <th style={{ ...s.th, width: 160 }} colSpan={2}>항목 구분</th>
+                {RETIRE_TIERS.map(t => <th key={t.key} style={s.th}>{t.label}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {RETIRE_SYS_ROWS.map((row, ri) => {
+                if (row.type === 'plain') {
+                  return (
+                    <tr key={row.key} style={{ borderBottom: '1px solid #F1F5F9' }}>
+                      <td style={{ ...s.td, fontWeight: 600 }} colSpan={2}>{row.label}</td>
+                      {RETIRE_TIERS.map(t => (
+                        <td key={t.key} style={s.td}>
+                          <input style={s.input} type="text" inputMode="decimal"
+                            value={displayVal(t.key, row.key, row.money)}
+                            onChange={e => change(t.key, row.key, row.money, e.target.value)} />
+                        </td>
+                      ))}
+                    </tr>
+                  )
+                }
+                if (row.type === 'computed') {
+                  return (
+                    <tr key="computed" style={{ borderBottom: '1px solid #F1F5F9', background: '#DBEAFE' }}>
+                      <td style={{ ...s.td, fontWeight: 700 }} colSpan={2}>{row.label}</td>
+                      {RETIRE_TIERS.map(t => (
+                        <td key={t.key} style={{ ...s.td, fontWeight: 700, color: '#2563EB' }}>
+                          {Math.round(retireAnnualTotal(sysGetter(t.key))).toLocaleString()}
+                        </td>
+                      ))}
+                    </tr>
+                  )
+                }
+                return row.sub.map((sub, si) => (
+                  <tr key={`${ri}-${si}`} style={{ borderBottom: '1px solid #F1F5F9' }}>
+                    {si === 0 && <td style={{ ...s.td, fontWeight: 600 }} rowSpan={row.sub.length}>{row.label}</td>}
+                    <td style={{ ...s.td, color: '#64748B', fontSize: 12 }}>{sub.label}</td>
+                    {RETIRE_TIERS.map(t => (
+                      <td key={t.key} style={s.td}>
+                        <input style={s.input} type="text" inputMode="decimal"
+                          value={displayVal(t.key, sub.key, sub.money)}
+                          onChange={e => change(t.key, sub.key, sub.money, e.target.value)} />
+                      </td>
+                    ))}
+                  </tr>
+                ))
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
 }
 
 // ─── 기본값관리 > 결혼 ─────────────────────────────────────────────────────────
@@ -160,14 +325,241 @@ const RATE_ROWS = [
   { key: 'SYSTEM_EXP_EDU_XPNS_RT', label: '예상교육비인상율(%)' },
 ]
 
+// 재무비율 적정성 기준(기준관리 > 재무비율) — 2026-11-19 사용자 재지시로 구조를
+// 바로잡음: page05.mxml(사용자 앱 원본)을 다시 확인한 결과 주의/보통/양호 3등급은 각각
+// 독립 입력값이 아니라, 비율마다 상한/하한 2개(From~To)만 입력하면 3등급이 계산되어
+// 나오는 파생값이었다(사용자 앱 RatioThresholdTable.jsx와 동일 로직 — 구조를 양쪽
+// 레포에서 동일하게 유지해야 해서 그대로 복제함). 그래서 TieredFieldsTab(순수 tier×field
+// 독립 입력)으론 표현이 안 돼 RatioRangeTab 전용 컴포넌트로 교체했다(아래 정의).
+// planner_ratio_threshold_defaults는 보장자산/저축기간과 동일한 id=1 싱글톤 테이블(v0.35.0
+// 대응, supabase_planner_threshold_defaults.sql 참고).
+const RATIO_RANGES = [
+  { key: 'loan_ast_rt', label: '부채부담비율', criterion: '총부채 / 총자산', lowerCol: 'loan_ast_rt_lower_bnd', upperCol: 'loan_ast_rt_upper_bnd', direction: 'lowerBetter' },
+  { key: 'emrg_prep_rt', label: '긴급자금준비율', criterion: '유동성자산 / 월지출', lowerCol: 'emrg_prep_rt_lower_bnd', upperCol: 'emrg_prep_rt_upper_bnd', direction: 'higherBetter' },
+  { key: 'avg_sav_rt', label: '월평균저축율', criterion: '월저축액 / 월수입', lowerCol: 'avg_sav_rt_lower_bnd', upperCol: 'avg_sav_rt_upper_bnd', direction: 'higherBetter' },
+  { key: 'loan_mgr_rt', label: '부채관리안정성', criterion: '월부채납입금 / 월수입', lowerCol: 'loan_mgr_rt_lower_bnd', upperCol: 'loan_mgr_rt_upper_bnd', direction: 'lowerBetter' },
+  { key: 'risk_mgr_rt', label: '위험대비안정성', criterion: '월보장성보험료 / 월수입', lowerCol: 'risk_mgr_rt_lower_bnd', upperCol: 'risk_mgr_rt_upper_bnd', direction: 'higherBetter' },
+]
+
+// 보장자산(기준관리) — 등급 구분 없는 전역 단일 행이라 SingletonFieldsTab 전용 컴포넌트를
+// 쓴다(아래 정의). money:true인 필드는 화면엔 만원으로 보여주고 저장 시 원으로 환산한다
+// (EduDefaultsTab과 동일 패턴) — 로컬 protect_asset_threshold_defaults가 원 단위로
+// 저장하는 것과 맞춰야 한다(systemDefaults.js computeSystemProtectAssetDefaults 참고).
+const PROTECT_ASSET_ROWS = [
+  { key: 'dep_amt_rt', label: '보험료(소득금액 대비, %)' },
+  { key: 'lmt_age',    label: '보장기간(세)' },
+  { key: 'dth_amt',    label: '사망보험금(만원)', money: true },
+  { key: 'dmg_amt',    label: '재해상해(만원)',   money: true },
+  { key: 'cancer_amt', label: '암진단비(만원)',   money: true },
+  { key: 'opr_amt',    label: '수술비(만원)',     money: true },
+  { key: 'hosp_amt',   label: '입원비(만원)',     money: true },
+]
+
+// 저축기간(기준관리) — 2026-11-19 사용자 재지시로 구조를 바로잡음: page07.mxml을 다시
+// 확인한 결과 입력값은 단기/중기 경계(LOWER)·중기/장기 경계(UPPER) 2개뿐이고, 단기/중기/
+// 장기 3행은 그 2개로 계산되는 파생값이다(사용자 앱 SavTermRangeTable.jsx와 동일 로직).
+// SingletonFieldsTab(단순 항목/값 나열)으론 이 파생 표시를 못 해 SavTermRangeTab 전용
+// 컴포넌트로 교체했다(아래 정의). 테이블/컬럼명은 그대로(planner_savings_term_defaults).
+
+// ─── 좌측 하위메뉴 그룹 공용 틀(Seed편집기>시스템코드와 동일한 레이아웃, 2026-11-19
+// 사용자 지시) — "기본값 관리"/"기준 관리" 둘 다 상위 탭 하나 아래에 여러 카테고리를
+// 좌측 세로 메뉴로 묶는다. 하위메뉴 전환 시 미저장 경고도 CodeNamesTab의 그룹 전환과
+// 동일하게 건다.
+// onDirtyChange(선택) — 바깥(PlannerSeedEditor)의 상위 탭 전환 가드에도 이 안의 dirty
+// 상태를 같이 알려준다. 안 주면(onDirtyChange 없이 단독 사용) 내부 하위메뉴 전환 가드만
+// 동작한다.
+function SubmenuGroup({ items, render, onDirtyChange }) {
+  const [active, setActive] = useState(items[0].key)
+  const dirtyRef = useRef(false)
+  const setDirty = (v) => { dirtyRef.current = v; onDirtyChange?.(v) }
+  const handleSwitch = (key) => {
+    if (dirtyRef.current && !window.confirm('저장하지 않은 변경사항이 있습니다. 이동하시겠습니까?')) return
+    setDirty(false)
+    setActive(key)
+  }
+  return (
+    <div style={{ display: 'flex', gap: 0 }}>
+      <div style={s.groupSidebar}>
+        {items.map(it => (
+          <button key={it.key}
+            style={{ ...s.groupBtn, ...(active === it.key ? s.groupBtnActive : {}) }}
+            onClick={() => handleSwitch(it.key)}>
+            {it.label}
+          </button>
+        ))}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        {render(active, setDirty)}
+      </div>
+    </div>
+  )
+}
+
+// "기본값 관리" — 은퇴/교육/결혼/상승률 4개 탭을 하나로 묶고 하위메뉴로 생활수준/교육비/
+// 결혼자금/상승률을 둔다(2026-11-19 사용자 지시 — 탭명은 환경설정 실제 메뉴 이름을
+// 그대로 썼지만("은퇴"→"생활수준" 등은 그 메뉴의 실제 화면 타이틀인 "생활수준별 기본값
+// 관리"에 맞춘 이름).
+const DEFAULTS_SUBMENU = [
+  { key: 'retire', label: '생활수준' },
+  { key: 'edu',    label: '교육비' },
+  { key: 'wed',    label: '결혼자금' },
+  { key: 'rate',   label: '상승률' },
+]
+function DefaultsManagementGroup({ onDirtyChange: onOuterDirtyChange }) {
+  return (
+    <SubmenuGroup items={DEFAULTS_SUBMENU} onDirtyChange={onOuterDirtyChange} render={(active, onDirtyChange) => {
+      if (active === 'retire') return <RetireSystemTable onDirtyChange={onDirtyChange} />
+      if (active === 'edu')    return <EduDefaultsTab onDirtyChange={onDirtyChange} />
+      if (active === 'wed')    return <TieredFieldsTab tiers={WED_TIERS} rows={WED_ROWS} tables={WED_TABLES} onDirtyChange={onDirtyChange} />
+      if (active === 'rate')   return <RateDefaultsTab onDirtyChange={onDirtyChange} />
+      return null
+    }} />
+  )
+}
+
+// "기준 관리" — 환경설정 "기준관리"(옛 적정성기준) 하위탭 3개(재무비율/보장자산/저축기간)
+// 그대로(2026-11-19 사용자 지시). 기본값 관리 탭 바로 다음에 둔다.
+const THRESHOLD_SUBMENU = [
+  { key: 'ratio',   label: '재무비율' },
+  { key: 'protect', label: '보장자산' },
+  { key: 'savings', label: '저축기간' },
+]
+function ThresholdManagementGroup({ onDirtyChange: onOuterDirtyChange }) {
+  return (
+    <SubmenuGroup items={THRESHOLD_SUBMENU} onDirtyChange={onOuterDirtyChange} render={(active, onDirtyChange) => {
+      if (active === 'ratio')   return <RatioRangeTab onDirtyChange={onDirtyChange} />
+      if (active === 'protect') return <SingletonFieldsTab table="planner_protect_asset_threshold_defaults" rows={PROTECT_ASSET_ROWS} onDirtyChange={onDirtyChange} />
+      if (active === 'savings') return <SavTermRangeTab onDirtyChange={onDirtyChange} />
+      return null
+    }} />
+  )
+}
+
+// "R/P 스크립트" — 환경설정 "RP스크립트관리"(RpScriptPanel.jsx)의 "시스템값"(읽기전용
+// 기본 대본) 19종. 2026-11-19 사용자 지시로 신설 — "기준관리" 탭 다음에 둔다. 하위메뉴
+// 구성(코드/라벨/순서)은 RpScriptPanel.jsx의 SCRIPT_TYPES와 완전히 동일하게 맞춰야 한다
+// (사용자가 그 화면 드롭다운 스크린샷을 그대로 참고하라고 지시) — 두 레포가 다른 순서로
+// 보이면 어떤 항목이 어느 화면 대본인지 헷갈린다.
+const RP_SCRIPT_SUBMENU = [
+  { key: '200', label: '간편설계 : 시작' },
+  { key: '201', label: '간편설계 : 은퇴설계' },
+  { key: '202', label: '간편설계 : 교육자금마련' },
+  { key: '203', label: '간편설계 : 주택마련' },
+  { key: '204', label: '간편설계 : 결혼자금마련' },
+  { key: '100', label: '상세설계 : 고객정보' },
+  { key: '101', label: '상세설계 : 자산/부채현황' },
+  { key: '102', label: '상세설계 : 수입/지출현황' },
+  { key: '103', label: '상세설계 : 은퇴설계' },
+  { key: '104', label: '상세설계 : 교육자금마련' },
+  { key: '105', label: '상세설계 : 주택마련' },
+  { key: '106', label: '상세설계 : 결혼자금마련' },
+  { key: '107', label: '상세설계 : 기타목표설계' },
+  { key: '109', label: '상세설계 : 재무목표별 자산분석/설계' },
+  { key: '110', label: '상세설계 : 저축기간별 자산분석/설계' },
+  { key: '111', label: '상세설계 : 사망위험 분석/설계' },
+  { key: '112', label: '상세설계 : 보장자산 분석/설계' },
+  { key: '113', label: '상세설계 : 자산시계열 분석' },
+  { key: '114', label: '상세설계 : 현금흐름 분석' },
+]
+function RpScriptGroup({ onDirtyChange: onOuterDirtyChange }) {
+  return (
+    <SubmenuGroup items={RP_SCRIPT_SUBMENU} onDirtyChange={onOuterDirtyChange} render={(active, onDirtyChange) => (
+      <RpScriptEditTab key={active} scriptTp={active} onDirtyChange={onDirtyChange} />
+    )} />
+  )
+}
+
+// planner_rp_script_defaults는 script_tp(PK)별로 행이 자연스럽게 나뉘는 테이블이라(id=1
+// 싱글톤도, tier×field 격자도 아님) 전용 단일 텍스트 편집기를 쓴다 — 여기서 다루는 건
+// "시스템값"(읽기전용 기본 대본)뿐이고, 설계사별 "사용자 정의"는 user_settings에 남아
+// 이 화면 관리 대상이 아니다(RpScriptPanel.jsx와 동일 원칙).
+function RpScriptEditTab({ scriptTp, onDirtyChange }) {
+  const [text, setText]       = useState('')
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving]   = useState(false)
+  const [dirty, setDirty]     = useState(false)
+  const [msg, setMsg]         = useState(null)
+  const savedRef = useRef('')
+  const savingRef = useRef(false)
+
+  useEffect(() => { onDirtyChange?.(dirty) }, [dirty])
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    const { data, error } = await supabase.from('planner_rp_script_defaults').select('script').eq('script_tp', scriptTp).maybeSingle()
+    if (error) { setMsg({ type: 'error', text: error.message }); setLoading(false); return }
+    const v = data?.script ?? ''
+    setText(v); savedRef.current = v; setDirty(false); setLoading(false)
+  }, [scriptTp])
+
+  useEffect(() => { load() }, [load])
+
+  const change = (v) => { setText(v); setDirty(v !== savedRef.current) }
+
+  const handleSave = async () => {
+    if (savingRef.current) return
+    savingRef.current = true
+    try {
+      setSaving(true); setMsg(null)
+      const { error } = await supabase.from('planner_rp_script_defaults')
+        .upsert({ script_tp: scriptTp, script: text }, { onConflict: 'script_tp' })
+      if (error) { setMsg({ type: 'error', text: error.message }); return }
+      setMsg({ type: 'success', text: '정상적으로 저장되었습니다.' })
+      savedRef.current = text; setDirty(false)
+      touchSyncMeta()
+    } catch (e) {
+      setMsg({ type: 'error', text: e?.message || String(e) })
+    } finally {
+      savingRef.current = false
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div style={s.card}>
+      <div style={s.toolbar}>
+        <span style={s.cnt}>시스템값 {dirty && <span style={{ color: '#DC2626', marginLeft: 8 }}>● 미저장</span>}</span>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button style={s.btn('ghost')} onClick={load} disabled={saving}>↺ 새로고침</button>
+          <button style={s.btn('primary')} onClick={handleSave} disabled={saving || !dirty}>
+            {saving ? '저장 중…' : '💾 저장'}
+          </button>
+        </div>
+      </div>
+      <MsgModal msg={msg} onClose={() => setMsg(null)} />
+      {loading ? <div style={s.empty}>로딩 중…</div> : (
+        <textarea
+          // 스크롤바 없이 내용 길이에 맞춰 세로로 쭉 늘어나게(2026-11-19 사용자 지시) —
+          // 사용자 앱 RpScriptPanel.jsx와 동일하게 field-sizing:content를 쓴다(브라우저가
+          // 레이아웃 엔진 차원에서 내용에 맞춰 높이를 직접 계산). resize 핸들은 자동 높이
+          // 조정과 충돌하므로 제거.
+          style={{ width: '100%', minHeight: 360, padding: '10px 12px', border: '1.5px solid #CBD5E1', borderRadius: 8, fontSize: 13.5, fontFamily: 'inherit', lineHeight: 1.6, boxSizing: 'border-box', resize: 'none', fieldSizing: 'content' }}
+          value={text}
+          onChange={e => change(e.target.value)}
+          placeholder="등록된 시스템 기본 대본이 없습니다."
+        />
+      )}
+    </div>
+  )
+}
+
 const SECTIONS = [
   {
     title: '기본값관리 (환경설정 실제 메뉴와 동일 구성)',
     tabs: [
-      { key: 'retire', label: '은퇴' },
-      { key: 'edu',    label: '교육' },
-      { key: 'wed',    label: '결혼' },
-      { key: 'rate',   label: '상승률' },
+      { key: 'defaults', label: '기본값 관리' },
+    ],
+  },
+  {
+    title: '기준관리 (환경설정 실제 메뉴와 동일 구성)',
+    tabs: [
+      { key: 'threshold', label: '기준 관리' },
+    ],
+  },
+  {
+    title: 'R/P 스크립트 (환경설정 "RP스크립트관리"의 시스템값 19종)',
+    tabs: [
+      { key: 'rpscript', label: 'R/P 스크립트' },
     ],
   },
   {
@@ -193,7 +585,7 @@ const SECTIONS = [
 ]
 
 export default function PlannerSeedEditor() {
-  const [mainTab, setMainTab] = useState('retire')
+  const [mainTab, setMainTab] = useState('defaults')
   // 탭 전환 시 미저장 경고(2026-09-04, SeedEditor.jsx handleTabChange와 동일) — 원래 이 화면엔
   // 이 가드가 아예 없어서, 저장 중/저장 직후 다른 탭을 클릭하면 편집 중이던 컴포넌트가 그대로
   // 통째로 unmount되어(경고 없이) 진행 중이던 저장 결과 안내(alert)까지 함께 사라질 수 있었다.
@@ -217,9 +609,12 @@ export default function PlannerSeedEditor() {
         ✅ 사용자 앱 동기화 구현 완료(2026-08-15): 여기서 값을 저장하면 planner_seed_sync_meta가
         갱신되고, 사용자 앱은 Header의 "🔄 데이터 동기화" 버튼(seed:sync IPC, Smart HR+
         seedSync.js 대응물)으로 이 값을 내려받아 로컬 DB에 반영합니다(수동 트리거 — 로그인 시
-        자동 동기화는 아직 없음). 기본값관리 4개 탭(은퇴/교육/결혼/상승률)·시스템코드 11개
-        그룹은 로컬 앱의 최신 패치 값으로 이관 완료. 환경설정의 나머지 3개 메뉴(코드관리/
-        적정성기준/RP스크립트관리)는 설계사별 개인 설정값이라 관리 대상에서 제외했습니다.
+        자동 동기화는 아직 없음). "기본값 관리"(생활수준/교육비/결혼자금/상승률)·"기준 관리"
+        (재무비율/보장자산/저축기간)·"R/P 스크립트"(19종)·시스템코드 12개 그룹까지
+        관리합니다(2026-11-19부터 기준관리 3종 + R/P 스크립트 추가 — 전부 "사용자별 재정의만
+        있는 줄 알고 뺐었는데, 실제로는 전역 "시스템값" 레이어가 따로 있어 admin-portal에서
+        채워 넣어야 하는 항목이었음. R/P 스크립트는 "사용자 정의" 부분만 설계사별 개인
+        설정값이라 여전히 관리 대상 아님).
       </div>
 
       <div style={s.mainTabs}>
@@ -236,14 +631,13 @@ export default function PlannerSeedEditor() {
       </div>
 
       <div style={{ marginTop: 16 }}>
-        {mainTab === 'retire'   && <TieredFieldsTab tiers={RETIRE_TIERS} rows={RETIRE_ROWS} tables={RETIRE_TABLES} onDirtyChange={v => { dirtyRef.current = v }} />}
-        {mainTab === 'wed'      && <TieredFieldsTab tiers={WED_TIERS}    rows={WED_ROWS}    tables={WED_TABLES} onDirtyChange={v => { dirtyRef.current = v }} />}
-        {mainTab === 'edu'      && <EduDefaultsTab onDirtyChange={v => { dirtyRef.current = v }} />}
-        {mainTab === 'rate'     && <RateDefaultsTab onDirtyChange={v => { dirtyRef.current = v }} />}
-        {mainTab === 'refcodes' && <CodeNamesTab onDirtyChange={v => { dirtyRef.current = v }} />}
-        {mainTab === 'sysmisc'  && <SysConfigMiscTab onDirtyChange={v => { dirtyRef.current = v }} />}
+        {mainTab === 'defaults'  && <DefaultsManagementGroup onDirtyChange={v => { dirtyRef.current = v }} />}
+        {mainTab === 'threshold' && <ThresholdManagementGroup onDirtyChange={v => { dirtyRef.current = v }} />}
+        {mainTab === 'rpscript'  && <RpScriptGroup onDirtyChange={v => { dirtyRef.current = v }} />}
+        {mainTab === 'refcodes'  && <CodeNamesTab onDirtyChange={v => { dirtyRef.current = v }} />}
+        {mainTab === 'sysmisc'   && <SysConfigMiscTab onDirtyChange={v => { dirtyRef.current = v }} />}
         {(mainTab === 'pension_std' || mainTab === 'pension_rev') && (() => {
-          const cfg = SECTIONS[1].tabs.find(t => t.key === mainTab)
+          const cfg = SECTIONS[3].tabs.find(t => t.key === mainTab)
           return <SimpleTableTab key={cfg.table} table={cfg.table} pk={cfg.pk} columns={cfg.columns} onDirtyChange={v => { dirtyRef.current = v }} />
         })()}
       </div>
@@ -585,6 +979,333 @@ function TieredFieldsTab({ tiers, rows, tables, onDirtyChange }) {
             </tbody>
           </table>
         </div>
+      )}
+    </div>
+  )
+}
+
+// ─── 단일 행(싱글톤) 필드 편집기 — 보장자산/저축기간처럼 등급 구분 없는 전역 설정값 ───
+// (2026-11-19 신설) planner_protect_asset_threshold_defaults/planner_savings_term_defaults
+// 둘 다 id=1 고정 싱글톤 PK라(supabase_planner_threshold_defaults.sql 참고) 항상 그 한 행만
+// upsert한다. money:true인 필드는 화면엔 만원으로 보여주고 저장 시 원으로 환산한다
+// (EduDefaultsTab과 동일 패턴).
+function SingletonFieldsTab({ table, rows, onDirtyChange }) {
+  const [values, setValues]   = useState({})
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving]   = useState(false)
+  const [dirty, setDirty]     = useState(false)
+  const [msg, setMsg]         = useState(null)
+  const savingRef = useRef(false)
+
+  useEffect(() => { onDirtyChange?.(dirty) }, [dirty])
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    const { data, error } = await supabase.from(table).select('*').eq('id', 1).maybeSingle()
+    if (error) { setMsg({ type: 'error', text: error.message }); setLoading(false); return }
+    setValues(data || {}); setDirty(false); setLoading(false)
+  }, [table])
+
+  useEffect(() => { load() }, [load])
+
+  // 금액(money:true) 필드는 천단위 콤마를 찍어 보여준다(2026-11-19 사용자 지시 —
+  // "보장자산 메뉴에서 금액 입력에는 콤마 찍어줘"). 입력 중엔 콤마를 지우고 숫자만
+  // 파싱해서 저장하고, 보여줄 때만 다시 콤마를 붙인다.
+  const displayVal = (row) => {
+    const raw = values[row.key]
+    if (raw === undefined || raw === null || raw === '') return ''
+    const v = row.money ? Number(raw) / 10000 : raw
+    return row.money ? Number(v).toLocaleString('ko-KR') : v
+  }
+
+  const change = (row, inputVal) => {
+    const cleaned = inputVal.replace(/,/g, '')
+    const num = cleaned === '' ? '' : Number(cleaned)
+    if (num !== '' && Number.isNaN(num)) return
+    const raw = row.money ? (num === '' ? '' : num * 10000) : num
+    setValues(prev => ({ ...prev, [row.key]: raw }))
+    setDirty(true)
+  }
+
+  const handleSave = async () => {
+    if (savingRef.current) return
+    savingRef.current = true
+    try {
+      setSaving(true); setMsg(null)
+      const payload = { id: 1 }
+      for (const row of rows) payload[row.key] = values[row.key] === '' || values[row.key] == null ? null : Number(values[row.key])
+      const { error } = await supabase.from(table).upsert(payload, { onConflict: 'id' })
+      if (error) { setMsg({ type: 'error', text: error.message }); return }
+      setMsg({ type: 'success', text: '정상적으로 저장되었습니다.' })
+      touchSyncMeta()
+      load()
+    } catch (e) {
+      setMsg({ type: 'error', text: e?.message || String(e) })
+    } finally {
+      savingRef.current = false
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div style={s.card}>
+      <div style={s.toolbar}>
+        <span style={s.cnt}>시스템값 {dirty && <span style={{ color: '#DC2626', marginLeft: 8 }}>● 미저장</span>}</span>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button style={s.btn('ghost')} onClick={load} disabled={saving}>↺ 새로고침</button>
+          <button style={s.btn('primary')} onClick={handleSave} disabled={saving || !dirty}>
+            {saving ? '저장 중…' : '💾 저장'}
+          </button>
+        </div>
+      </div>
+      <MsgModal msg={msg} onClose={() => setMsg(null)} />
+      {loading ? <div style={s.empty}>로딩 중…</div> : (
+        <table style={{ ...s.table, maxWidth: 420 }}>
+          <thead><tr><th style={s.th}>항목</th><th style={{ ...s.th, width: 160 }}>값</th></tr></thead>
+          <tbody>
+            {rows.map(row => (
+              <tr key={row.key} style={{ borderBottom: '1px solid #F1F5F9' }}>
+                <td style={s.td}>{row.label}</td>
+                <td style={s.td}>
+                  <input style={s.input} type="text" inputMode="decimal" value={displayVal(row)}
+                    onChange={e => change(row, e.target.value)} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  )
+}
+
+// 비율의 상한/하한 2값 + 방향으로 주의/보통/양호 3단계 표시 텍스트를 계산한다(사용자 앱
+// RatioThresholdTable.jsx의 tierTexts()와 완전히 동일한 로직 — 두 레포에서 같은 결과가
+// 나오도록 유지해야 한다).
+function ratioTierTexts(direction, lower, upper) {
+  const hasLower = lower !== '' && lower != null
+  const hasUpper = upper !== '' && upper != null
+  const range = hasLower && hasUpper ? `${lower}% 이상 ~ ${upper}% 미만` : '—'
+  if (direction === 'lowerBetter') {
+    return { caution: hasUpper ? `${upper}% 이상` : '—', normal: range, good: hasLower ? `${lower}% 미만` : '—' }
+  }
+  return { caution: hasLower ? `${lower}% 미만` : '—', normal: range, good: hasUpper ? `${upper}% 이상` : '—' }
+}
+
+// ─── 재무비율 적정성 기준 편집기(기준관리 > 재무비율) ─────────────────────────
+// planner_ratio_threshold_defaults(id=1 싱글톤)에서 비율별 상한/하한 10개 컬럼을 읽고,
+// 사용자 앱과 동일하게 "구분|기준|주의|보통(입력 2칸)|양호" 구조로 보여준다. 여기선
+// "시스템값"만 다루므로(사용자별 "사용자 정의"는 사용자 앱에만 있음) 시스템값/사용자정의
+// 2단 그룹 헤더 없이 한 벌만 그린다.
+function RatioRangeTab({ onDirtyChange }) {
+  const table = 'planner_ratio_threshold_defaults'
+  const [values, setValues]   = useState({})
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving]   = useState(false)
+  const [dirty, setDirty]     = useState(false)
+  const [msg, setMsg]         = useState(null)
+  const savingRef = useRef(false)
+
+  useEffect(() => { onDirtyChange?.(dirty) }, [dirty])
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    const { data, error } = await supabase.from(table).select('*').eq('id', 1).maybeSingle()
+    if (error) { setMsg({ type: 'error', text: error.message }); setLoading(false); return }
+    setValues(data || {}); setDirty(false); setLoading(false)
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const change = (col, inputVal) => {
+    setValues(prev => ({ ...prev, [col]: inputVal === '' ? '' : Number(inputVal) }))
+    setDirty(true)
+  }
+
+  const handleSave = async () => {
+    if (savingRef.current) return
+    for (const r of RATIO_RANGES) {
+      const lower = values[r.lowerCol], upper = values[r.upperCol]
+      const hasLower = lower !== '' && lower != null, hasUpper = upper !== '' && upper != null
+      if (hasLower !== hasUpper) { setMsg({ type: 'error', text: `${r.label} — 상한/하한 값을 모두 입력하거나 모두 비워두세요.` }); return }
+      if (hasLower && hasUpper && Number(upper) <= Number(lower)) { setMsg({ type: 'error', text: `${r.label} — 상한 값은 하한 값보다 커야 합니다.` }); return }
+    }
+    savingRef.current = true
+    try {
+      setSaving(true); setMsg(null)
+      const payload = { id: 1 }
+      for (const r of RATIO_RANGES) {
+        payload[r.lowerCol] = values[r.lowerCol] === '' || values[r.lowerCol] == null ? null : Number(values[r.lowerCol])
+        payload[r.upperCol] = values[r.upperCol] === '' || values[r.upperCol] == null ? null : Number(values[r.upperCol])
+      }
+      const { error } = await supabase.from(table).upsert(payload, { onConflict: 'id' })
+      if (error) { setMsg({ type: 'error', text: error.message }); return }
+      setMsg({ type: 'success', text: '정상적으로 저장되었습니다.' })
+      touchSyncMeta()
+      load()
+    } catch (e) {
+      setMsg({ type: 'error', text: e?.message || String(e) })
+    } finally {
+      savingRef.current = false
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div style={s.card}>
+      <div style={s.toolbar}>
+        <span style={s.cnt}>시스템값 {dirty && <span style={{ color: '#DC2626', marginLeft: 8 }}>● 미저장</span>}</span>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button style={s.btn('ghost')} onClick={load} disabled={saving}>↺ 새로고침</button>
+          <button style={s.btn('primary')} onClick={handleSave} disabled={saving || !dirty}>
+            {saving ? '저장 중…' : '💾 저장'}
+          </button>
+        </div>
+      </div>
+      <MsgModal msg={msg} onClose={() => setMsg(null)} />
+      {loading ? <div style={s.empty}>로딩 중…</div> : (
+        <table style={s.table}>
+          <thead>
+            <tr>
+              <th style={s.th}>구분</th>
+              <th style={s.th}>기준</th>
+              <th style={s.th}>주의</th>
+              <th style={{ ...s.th, width: 200 }}>보통</th>
+              <th style={s.th}>양호</th>
+            </tr>
+          </thead>
+          <tbody>
+            {RATIO_RANGES.map(r => {
+              const lower = values[r.lowerCol] ?? '', upper = values[r.upperCol] ?? ''
+              const text = ratioTierTexts(r.direction, lower, upper)
+              return (
+                <tr key={r.key} style={{ borderBottom: '1px solid #F1F5F9' }}>
+                  <td style={s.td}>{r.label}</td>
+                  <td style={{ ...s.td, color: '#64748B', fontSize: 12 }}>{r.criterion}</td>
+                  <td style={s.td}>{text.caution}</td>
+                  <td style={s.td}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, marginBottom: 4 }}>
+                      <input style={{ ...s.input, width: 64, border: '1.5px solid #CBD5E1' }} type="text" inputMode="decimal" value={upper} onChange={e => change(r.upperCol, e.target.value)} />
+                      <span style={{ fontSize: 12, color: '#64748B' }}>%미만</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+                      <input style={{ ...s.input, width: 64, border: '1.5px solid #CBD5E1' }} type="text" inputMode="decimal" value={lower} onChange={e => change(r.lowerCol, e.target.value)} />
+                      <span style={{ fontSize: 12, color: '#64748B' }}>%이상</span>
+                    </div>
+                  </td>
+                  <td style={s.td}>{text.good}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      )}
+    </div>
+  )
+}
+
+// ─── 저축기간구분 경계값 편집기(기준관리 > 저축기간) ───────────────────────────
+// planner_savings_term_defaults(id=1 싱글톤, sav_mid_trm_lower_bnd/upper_bnd)에서 2값을
+// 읽고, 사용자 앱과 동일하게 "단기/중기/장기" 3행으로 보여준다. 입력창은 "중기" 행에만
+// 둔다(사용자 앱 SavTermRangeTable.jsx와 동일 레이아웃).
+function SavTermRangeTab({ onDirtyChange }) {
+  const table = 'planner_savings_term_defaults'
+  const LOWER = 'sav_mid_trm_lower_bnd', UPPER = 'sav_mid_trm_upper_bnd'
+  const [values, setValues]   = useState({})
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving]   = useState(false)
+  const [dirty, setDirty]     = useState(false)
+  const [msg, setMsg]         = useState(null)
+  const savingRef = useRef(false)
+
+  useEffect(() => { onDirtyChange?.(dirty) }, [dirty])
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    const { data, error } = await supabase.from(table).select('*').eq('id', 1).maybeSingle()
+    if (error) { setMsg({ type: 'error', text: error.message }); setLoading(false); return }
+    setValues(data || {}); setDirty(false); setLoading(false)
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const change = (col, inputVal) => {
+    setValues(prev => ({ ...prev, [col]: inputVal === '' ? '' : Number(inputVal) }))
+    setDirty(true)
+  }
+
+  const handleSave = async () => {
+    if (savingRef.current) return
+    const lower = values[LOWER], upper = values[UPPER]
+    const hasLower = lower !== '' && lower != null, hasUpper = upper !== '' && upper != null
+    if (hasLower !== hasUpper) { setMsg({ type: 'error', text: '단기/중기 경계와 중기/장기 경계 값을 모두 입력하거나 모두 비워두세요.' }); return }
+    if (hasLower && hasUpper && Number(upper) <= Number(lower)) { setMsg({ type: 'error', text: '중기/장기 경계 값은 단기/중기 경계 값보다 커야 합니다.' }); return }
+    savingRef.current = true
+    try {
+      setSaving(true); setMsg(null)
+      const payload = {
+        id: 1,
+        [LOWER]: lower === '' || lower == null ? null : Number(lower),
+        [UPPER]: upper === '' || upper == null ? null : Number(upper),
+      }
+      const { error } = await supabase.from(table).upsert(payload, { onConflict: 'id' })
+      if (error) { setMsg({ type: 'error', text: error.message }); return }
+      setMsg({ type: 'success', text: '정상적으로 저장되었습니다.' })
+      touchSyncMeta()
+      load()
+    } catch (e) {
+      setMsg({ type: 'error', text: e?.message || String(e) })
+    } finally {
+      savingRef.current = false
+      setSaving(false)
+    }
+  }
+
+  const lower = values[LOWER] ?? '', upper = values[UPPER] ?? ''
+
+  return (
+    <div style={s.card}>
+      <div style={s.toolbar}>
+        <span style={s.cnt}>시스템값 {dirty && <span style={{ color: '#DC2626', marginLeft: 8 }}>● 미저장</span>}</span>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button style={s.btn('ghost')} onClick={load} disabled={saving}>↺ 새로고침</button>
+          <button style={s.btn('primary')} onClick={handleSave} disabled={saving || !dirty}>
+            {saving ? '저장 중…' : '💾 저장'}
+          </button>
+        </div>
+      </div>
+      <MsgModal msg={msg} onClose={() => setMsg(null)} />
+      {loading ? <div style={s.empty}>로딩 중…</div> : (
+        <table style={{ ...s.table, maxWidth: 420 }}>
+          <thead><tr><th style={s.th}>구분</th><th style={{ ...s.th, width: 220 }}>값</th></tr></thead>
+          <tbody>
+            <tr style={{ borderBottom: '1px solid #F1F5F9' }}>
+              <td style={s.td}>단기</td>
+              <td style={s.td}>{lower !== '' ? `${lower}년 미만` : '—'}</td>
+            </tr>
+            <tr style={{ borderBottom: '1px solid #F1F5F9' }}>
+              <td style={s.td}>중기</td>
+              <td style={s.td}>
+                {/* 2026-11-19 사용자 지시 — 가로 한 줄에 입력 2개를 몰아넣으니 좁은 열
+                    너비에서 두 번째 입력이 줄바꿈되며 눈에 안 띄는 문제가 있었다(s.input의
+                    기본 border가 투명이라 더 그랬음). RatioRangeTab의 "보통" 칸과 동일하게
+                    입력칸마다 줄을 나누고 테두리를 명시적으로 보이게 했다. */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, marginBottom: 4 }}>
+                  <input style={{ ...s.input, width: 64, border: '1.5px solid #CBD5E1' }} type="text" inputMode="decimal" value={lower} onChange={e => change(LOWER, e.target.value)} />
+                  <span style={{ fontSize: 12, color: '#64748B' }}>년 이상</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+                  <input style={{ ...s.input, width: 64, border: '1.5px solid #CBD5E1' }} type="text" inputMode="decimal" value={upper} onChange={e => change(UPPER, e.target.value)} />
+                  <span style={{ fontSize: 12, color: '#64748B' }}>년 미만</span>
+                </div>
+              </td>
+            </tr>
+            <tr style={{ borderBottom: '1px solid #F1F5F9' }}>
+              <td style={s.td}>장기</td>
+              <td style={s.td}>{upper !== '' ? `${upper}년 이상` : '—'}</td>
+            </tr>
+          </tbody>
+        </table>
       )}
     </div>
   )
@@ -940,15 +1661,21 @@ const s = {
   },
   mainTabActive: { color: '#0D9488', borderBottom: '2px solid #0D9488' },
 
+  // 너비(2026-11-19 사용자 지시 — "하위 메뉴명이 두줄로 표시되지 않도록 늘리고 ... 모든
+  // 탭의 하위메뉴 너비를 거기에 맞게 통일해줘") — 가장 긴 라벨인 R/P 스크립트의
+  // "상세설계 : 재무목표별 자산분석/설계"(20자)가 13px 폰트에서 한 줄에 들어가는 폭으로
+  // 맞췄다. groupSidebar/groupBtn은 SubmenuGroup(기본값관리/기준관리/R·P스크립트)과
+  // CodeNamesTab(시스템코드) 전부가 공유하는 단일 스타일이라, 여기 하나만 바꾸면 모든
+  // 탭의 하위메뉴 너비가 자동으로 통일된다.
   groupSidebar: {
-    width: 150, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 2,
+    width: 240, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 2,
     borderRight: '1px solid #E2E8F0', paddingRight: 12, marginRight: 16,
   },
   groupBtn: {
     padding: '8px 12px', border: 'none', borderRadius: 8,
     background: 'transparent', fontSize: 13, cursor: 'pointer', color: '#475569',
     textAlign: 'left', fontFamily: 'inherit', fontWeight: 500,
-    transition: 'all .12s',
+    transition: 'all .12s', whiteSpace: 'nowrap',
   },
   groupBtnActive: { background: '#F0FDFA', boxShadow: 'inset 0 0 0 1.5px #5EEAD4', color: '#0D9488', fontWeight: 700 },
 
